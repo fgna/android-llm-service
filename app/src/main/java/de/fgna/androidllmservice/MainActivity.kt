@@ -30,6 +30,7 @@ import kotlinx.coroutines.launch
 class MainActivity : ComponentActivity() {
     private val modelStore by lazy { ModelStore(this) }
     private val runtime by lazy { LiteRtRuntime(this) }
+    private val diagnostics by lazy { ModelDiagnostics(this) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -41,6 +42,7 @@ class MainActivity : ComponentActivity() {
                         onRegisterModel = ::registerModel,
                         onClearModel = ::clearModel,
                         onGenerate = ::generate,
+                        onDiagnose = ::diagnose,
                     )
                 }
             }
@@ -64,14 +66,12 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun generate(
-        model: RegisteredModel,
-        prompt: String,
-        callback: (Result<GenerationResult>) -> Unit,
-    ) {
-        lifecycleScope.launch {
-            callback(runCatching { runtime.generate(model, prompt) })
-        }
+    private fun generate(model: RegisteredModel, prompt: String, callback: (Result<GenerationResult>) -> Unit) {
+        lifecycleScope.launch { callback(runCatching { runtime.generate(model, prompt) }) }
+    }
+
+    private fun diagnose(model: RegisteredModel, callback: (Result<ModelDiagnosticResult>) -> Unit) {
+        lifecycleScope.launch { callback(runCatching { diagnostics.inspect(model) }) }
     }
 
     override fun onDestroy() {
@@ -86,44 +86,37 @@ private fun AppScreen(
     onRegisterModel: (Uri, (Result<RegisteredModel>) -> Unit) -> Unit,
     onClearModel: ((() -> Unit) -> Unit),
     onGenerate: (RegisteredModel, String, (Result<GenerationResult>) -> Unit) -> Unit,
+    onDiagnose: (RegisteredModel, (Result<ModelDiagnosticResult>) -> Unit) -> Unit,
 ) {
     var model by remember { mutableStateOf(initialModel) }
     var prompt by remember { mutableStateOf("Antworte kurz auf Deutsch: Nenne drei Vorteile lokaler LLMs auf einem Smartphone.") }
     var response by remember { mutableStateOf("") }
     var status by remember { mutableStateOf("Bereit") }
+    var diagnostic by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
 
-    val picker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument(),
-    ) { uri ->
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             busy = true
             status = "Modell wird registriert …"
             response = ""
+            diagnostic = ""
             onRegisterModel(uri) { result ->
                 busy = false
                 result.onSuccess {
                     model = it
                     status = "Modell registriert. Keine Kopie angelegt."
-                }.onFailure {
-                    status = it.message ?: "Modell konnte nicht registriert werden."
-                }
+                }.onFailure { status = it.message ?: "Modell konnte nicht registriert werden." }
             }
         }
     }
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(20.dp),
+        modifier = Modifier.fillMaxSize().padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Text("Android LLM Service", style = MaterialTheme.typography.headlineMedium)
-        Text(
-            "M0 · Ein vorhandenes .litertlm-Modell direkt verwenden, ohne es in den App-Speicher zu kopieren.",
-            style = MaterialTheme.typography.bodyMedium,
-        )
-
+        Text("M0 · Ein vorhandenes .litertlm-Modell direkt verwenden, ohne es in den App-Speicher zu kopieren.")
         Text("Modell", style = MaterialTheme.typography.titleMedium)
         val current = model
         if (current == null) {
@@ -144,14 +137,37 @@ private fun AppScreen(
                     onClearModel {
                         model = null
                         response = ""
+                        diagnostic = ""
                         status = "Modellreferenz entfernt"
                         busy = false
                     }
-                }) {
-                    Text("Entfernen")
-                }
+                }) { Text("Entfernen") }
             }
         }
+
+        if (current != null) {
+            Button(enabled = !busy, onClick = {
+                busy = true
+                diagnostic = ""
+                status = "Modelldatei wird geprüft …"
+                onDiagnose(current) { result ->
+                    busy = false
+                    result.onSuccess {
+                        diagnostic = buildString {
+                            appendLine("SAF-Größe: ${it.declaredSizeBytes ?: -1}")
+                            appendLine("FD-Größe: ${it.descriptorSizeBytes}")
+                            appendLine("/proc/self/fd lesbar: ${it.procFdReadable}")
+                            appendLine("Erste 1 MiB identisch: ${it.procFdFirstBytesMatch}")
+                            appendLine("SHA-256 erste 1 MiB: ${it.firstMiBSha256}")
+                            append("Header: ${it.firstBytesHex}")
+                        }
+                        status = "Diagnose abgeschlossen"
+                    }.onFailure { status = it.message ?: "Diagnose fehlgeschlagen" }
+                }
+            }) { Text("Modelldatei prüfen") }
+        }
+
+        if (diagnostic.isNotBlank()) Text(diagnostic, style = MaterialTheme.typography.bodySmall)
 
         OutlinedTextField(
             value = prompt,
@@ -173,16 +189,11 @@ private fun AppScreen(
                     busy = false
                     result.onSuccess {
                         response = it.text.ifBlank { "(Leere Antwort)" }
-                        status = "${if (it.coldStart) "Cold start" else "Warm"}: " +
-                            "Init ${it.initializationMillis} ms · Generation ${it.generationMillis} ms"
-                    }.onFailure {
-                        status = it.message ?: "Inferenz fehlgeschlagen"
-                    }
+                        status = "${if (it.coldStart) "Cold start" else "Warm"}: Init ${it.initializationMillis} ms · Generation ${it.generationMillis} ms"
+                    }.onFailure { status = it.message ?: "Inferenz fehlgeschlagen" }
                 }
             },
-        ) {
-            Text("Lokal ausführen")
-        }
+        ) { Text("Lokal ausführen") }
 
         Text(status, style = MaterialTheme.typography.bodySmall)
         if (response.isNotBlank()) {
@@ -192,5 +203,4 @@ private fun AppScreen(
     }
 }
 
-private fun formatSize(bytes: Long): String =
-    String.format("%.2f GB", bytes / 1024.0 / 1024.0 / 1024.0)
+private fun formatSize(bytes: Long): String = String.format("%.2f GB", bytes / 1024.0 / 1024.0 / 1024.0)
