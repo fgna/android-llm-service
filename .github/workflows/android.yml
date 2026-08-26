@@ -1,0 +1,19 @@
+name: Android
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Unit tests
+        run: sh ./gradlew test
+      - name: Assemble debug APK
+        run: sh ./gradlew assembleDebug
