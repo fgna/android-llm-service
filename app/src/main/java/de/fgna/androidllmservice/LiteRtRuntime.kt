@@ -2,8 +2,6 @@ package de.fgna.androidllmservice
 
 import android.content.Context
 import android.net.Uri
-import android.os.Environment
-import android.os.ParcelFileDescriptor
 import com.google.ai.edge.litertlm.Backend
 import com.google.ai.edge.litertlm.Contents
 import com.google.ai.edge.litertlm.Engine
@@ -27,12 +25,7 @@ internal data class GenerationResult(
 )
 
 internal class LiteRtRuntime(private val context: Context) : AutoCloseable {
-    private data class LoadedModel(
-        val uri: Uri,
-        val descriptor: ParcelFileDescriptor?,
-        val engine: Engine,
-    )
-
+    private data class LoadedModel(val uri: Uri, val engine: Engine)
     private val mutex = Mutex()
     private var loaded: LoadedModel? = null
 
@@ -68,66 +61,25 @@ internal class LiteRtRuntime(private val context: Context) : AutoCloseable {
 
     private fun load(model: RegisteredModel) {
         closeLoaded()
-        val candidates = directPathCandidates(model)
-        val failures = mutableListOf<String>()
-
-        for (path in candidates) {
-            if (!File(path).canRead()) {
-                failures += "$path: not readable"
-                continue
-            }
-            val result = runCatching { initialize(model.uri, path, null) }
-            if (result.isSuccess) {
-                loaded = result.getOrThrow()
-                return
-            }
-            failures += "$path: ${result.exceptionOrNull()?.message}"
-        }
-
-        val descriptor = context.contentResolver.openFileDescriptor(model.uri, "r")
-            ?: error("Model file is no longer accessible.")
-        val procPath = "/proc/self/fd/${descriptor.fd}"
-        try {
-            loaded = initialize(model.uri, procPath, descriptor)
-        } catch (failure: Throwable) {
-            descriptor.close()
-            val direct = if (failures.isEmpty()) "no direct path candidates" else failures.joinToString(" | ")
-            throw IllegalStateException(
-                "No zero-copy model path worked. Direct: $direct; proc-fd: ${failure.message}",
-                failure,
-            )
-        }
-    }
-
-    private fun directPathCandidates(model: RegisteredModel): List<String> {
-        val downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-        val name = model.displayName
-        return listOf(
-            File(downloads, name).absolutePath,
-            "/storage/emulated/0/Download/$name",
-            "/sdcard/Download/$name",
-        ).distinct()
-    }
-
-    private fun initialize(uri: Uri, modelPath: String, descriptor: ParcelFileDescriptor?): LoadedModel {
+        check(File(model.localPath).isFile) { "Service-owned model file is missing." }
         var gpuFailure: Throwable? = null
-        val gpu = Engine(EngineConfig(modelPath = modelPath, backend = Backend.GPU(), cacheDir = context.cacheDir.absolutePath))
+        val gpu = Engine(EngineConfig(modelPath = model.localPath, backend = Backend.GPU(), cacheDir = context.cacheDir.absolutePath))
         try {
             gpu.initialize()
-            return LoadedModel(uri, descriptor, gpu)
+            loaded = LoadedModel(model.uri, gpu)
+            return
         } catch (failure: Throwable) {
             gpuFailure = failure
             runCatching { gpu.close() }
         }
-
-        val cpu = Engine(EngineConfig(modelPath = modelPath, backend = Backend.CPU(), cacheDir = context.cacheDir.absolutePath))
+        val cpu = Engine(EngineConfig(modelPath = model.localPath, backend = Backend.CPU(), cacheDir = context.cacheDir.absolutePath))
         try {
             cpu.initialize()
-            return LoadedModel(uri, descriptor, cpu)
+            loaded = LoadedModel(model.uri, cpu)
         } catch (cpuFailure: Throwable) {
             runCatching { cpu.close() }
             throw IllegalStateException(
-                "GPU: ${gpuFailure?.message}; CPU: ${cpuFailure.message}",
+                "LiteRT-LM failed on GPU and CPU. GPU: ${gpuFailure?.message}; CPU: ${cpuFailure.message}",
                 cpuFailure,
             )
         }
@@ -137,7 +89,6 @@ internal class LiteRtRuntime(private val context: Context) : AutoCloseable {
         val current = loaded ?: return
         loaded = null
         runCatching { current.engine.close() }
-        runCatching { current.descriptor?.close() }
     }
 
     override fun close() { closeLoaded() }
