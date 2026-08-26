@@ -3,6 +3,7 @@ package de.fgna.androidllmservice
 import android.content.Context
 import android.net.Uri
 import com.google.ai.edge.litertlm.Backend
+import com.google.ai.edge.litertlm.Content
 import com.google.ai.edge.litertlm.Contents
 import com.google.ai.edge.litertlm.Engine
 import com.google.ai.edge.litertlm.EngineConfig
@@ -29,7 +30,29 @@ internal class LiteRtRuntime(private val context: Context) : AutoCloseable {
     private val mutex = Mutex()
     private var loaded: LoadedModel? = null
 
-    suspend fun generate(model: RegisteredModel, prompt: String): GenerationResult = withContext(Dispatchers.IO) {
+    suspend fun generate(model: RegisteredModel, prompt: String): GenerationResult =
+        generateInternal(model) { current ->
+            runConversation(current, Contents.of(Content.Text(prompt)))
+        }
+
+    suspend fun generateWithImage(
+        model: RegisteredModel,
+        prompt: String,
+        imagePath: String,
+    ): GenerationResult = generateInternal(model) { current ->
+        runConversation(
+            current,
+            Contents.of(
+                Content.ImageFile(imagePath),
+                Content.Text(prompt),
+            ),
+        )
+    }
+
+    private suspend fun generateInternal(
+        model: RegisteredModel,
+        block: suspend (LoadedModel) -> String,
+    ): GenerationResult = withContext(Dispatchers.IO) {
         mutex.withLock {
             val loadStarted = System.nanoTime()
             val coldStart = loaded?.uri != model.uri
@@ -38,25 +61,25 @@ internal class LiteRtRuntime(private val context: Context) : AutoCloseable {
             var current = checkNotNull(loaded)
             val generationStarted = System.nanoTime()
             val response = try {
-                runConversation(current, prompt)
+                block(current)
             } catch (gpuFailure: Throwable) {
                 if (current.backend != "GPU") throw gpuFailure
                 closeLoaded()
                 current = loadBackend(model, Backend.CPU(), "CPU")
                 loaded = current
-                runConversation(current, prompt)
+                block(current)
             }
             GenerationResult(response.trim(), initializationMillis, elapsedMillis(generationStarted), coldStart)
         }
     }
 
-    private suspend fun runConversation(model: LoadedModel, prompt: String): String {
+    private suspend fun runConversation(model: LoadedModel, contents: Contents): String {
         val conversation = model.engine.createConversation()
         try {
             return suspendCancellableCoroutine { continuation ->
                 val output = StringBuilder()
                 conversation.sendMessageAsync(
-                    Contents.of(prompt),
+                    contents,
                     object : MessageCallback {
                         override fun onMessage(message: Message) { output.append(message.toString()) }
                         override fun onDone() { if (continuation.isActive) continuation.resume(output.toString()) }
@@ -93,6 +116,7 @@ internal class LiteRtRuntime(private val context: Context) : AutoCloseable {
             EngineConfig(
                 modelPath = model.localPath,
                 backend = backend,
+                visionBackend = backend,
                 maxNumTokens = 8192,
             ),
         )
