@@ -4,6 +4,8 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
 android {
     namespace = "de.fgna.androidllmservice"
     compileSdk = 36
@@ -31,16 +33,18 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-    }
-
     packaging {
         resources.excludes += setOf(
             "/META-INF/AL2.0",
             "/META-INF/LGPL2.1",
             "/META-INF/versions/9/OSGI-INF/MANIFEST.MF",
         )
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(JvmTarget.JVM_17)
     }
 }
 
