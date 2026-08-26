@@ -4,9 +4,15 @@ import android.content.Context
 import android.net.Uri
 import android.os.ParcelFileDescriptor
 import com.google.ai.edge.litertlm.Backend
+import com.google.ai.edge.litertlm.Contents
 import com.google.ai.edge.litertlm.Engine
 import com.google.ai.edge.litertlm.EngineConfig
+import com.google.ai.edge.litertlm.Message
+import com.google.ai.edge.litertlm.MessageCallback
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -39,7 +45,28 @@ internal class LiteRtRuntime(private val context: Context) : AutoCloseable {
                 val current = checkNotNull(loaded)
                 val generationStarted = System.nanoTime()
                 val response = current.engine.createConversation().use { conversation ->
-                    conversation.sendMessage(prompt).text
+                    suspendCancellableCoroutine<String> { continuation ->
+                        val output = StringBuilder()
+                        conversation.sendMessageAsync(
+                            Contents.of(prompt),
+                            object : MessageCallback {
+                                override fun onMessage(message: Message) {
+                                    output.append(message.toString())
+                                }
+
+                                override fun onDone() {
+                                    if (continuation.isActive) continuation.resume(output.toString())
+                                }
+
+                                override fun onError(throwable: Throwable) {
+                                    if (continuation.isActive) continuation.resumeWithException(throwable)
+                                }
+                            },
+                        )
+                        continuation.invokeOnCancellation {
+                            runCatching { conversation.cancelProcess() }
+                        }
+                    }
                 }
                 GenerationResult(
                     text = response.trim(),
