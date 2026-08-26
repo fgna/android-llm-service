@@ -31,7 +31,7 @@ import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     private val modelStore by lazy { ModelStore(this) }
-    private val runtime by lazy { LiteRtRuntime(this) }
+    private val runtime by lazy { LlmRuntimeProvider.get(this) }
     private val diagnostics by lazy { ModelDiagnostics(this) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -75,11 +75,6 @@ class MainActivity : ComponentActivity() {
     private fun diagnose(model: RegisteredModel, callback: (Result<ModelDiagnosticResult>) -> Unit) {
         lifecycleScope.launch { callback(runCatching { diagnostics.inspect(model) }) }
     }
-
-    override fun onDestroy() {
-        if (isFinishing) runtime.close()
-        super.onDestroy()
-    }
 }
 
 @Composable
@@ -121,7 +116,7 @@ private fun AppScreen(
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Text("Android LLM Service", style = MaterialTheme.typography.headlineMedium)
-        Text("M0 · Eine zentrale lokale .litertlm-Modellkopie für gemeinsame Inferenz bereitstellen.")
+        Text("M1 · Eine zentrale lokale .litertlm-Modellkopie für gemeinsame Inferenz bereitstellen.")
         Text("Modell", style = MaterialTheme.typography.titleMedium)
         val current = model
         if (current == null) {
