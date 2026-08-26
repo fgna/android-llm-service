@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -98,29 +100,32 @@ private fun AppScreen(
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             busy = true
-            status = "Modell wird registriert …"
+            status = "Modell wird importiert …"
             response = ""
             diagnostic = ""
             onRegisterModel(uri) { result ->
                 busy = false
                 result.onSuccess {
                     model = it
-                    status = "Modell registriert. Keine Kopie angelegt."
-                }.onFailure { status = it.message ?: "Modell konnte nicht registriert werden." }
+                    status = "Modell importiert. Android LLM Service besitzt die zentrale Modellkopie."
+                }.onFailure { status = it.message ?: "Modell konnte nicht importiert werden." }
             }
         }
     }
 
     Column(
-        modifier = Modifier.fillMaxSize().padding(20.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Text("Android LLM Service", style = MaterialTheme.typography.headlineMedium)
-        Text("M0 · Ein vorhandenes .litertlm-Modell direkt verwenden, ohne es in den App-Speicher zu kopieren.")
+        Text("M0 · Eine zentrale lokale .litertlm-Modellkopie für gemeinsame Inferenz bereitstellen.")
         Text("Modell", style = MaterialTheme.typography.titleMedium)
         val current = model
         if (current == null) {
-            Text("Kein Modell registriert")
+            Text("Kein Modell importiert")
         } else {
             Text(current.displayName)
             current.sizeBytes?.let { Text(formatSize(it), style = MaterialTheme.typography.bodySmall) }
@@ -138,7 +143,7 @@ private fun AppScreen(
                         model = null
                         response = ""
                         diagnostic = ""
-                        status = "Modellreferenz entfernt"
+                        status = "Zentrale Modellkopie entfernt"
                         busy = false
                     }
                 }) { Text("Entfernen") }
