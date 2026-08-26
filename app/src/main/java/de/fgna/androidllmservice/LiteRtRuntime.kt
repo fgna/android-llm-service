@@ -25,7 +25,7 @@ internal data class GenerationResult(
 )
 
 internal class LiteRtRuntime(private val context: Context) : AutoCloseable {
-    private data class LoadedModel(val uri: Uri, val engine: Engine)
+    private data class LoadedModel(val uri: Uri, val engine: Engine, val backend: String)
     private val mutex = Mutex()
     private var loaded: LoadedModel? = null
 
@@ -33,55 +33,75 @@ internal class LiteRtRuntime(private val context: Context) : AutoCloseable {
         mutex.withLock {
             val loadStarted = System.nanoTime()
             val coldStart = loaded?.uri != model.uri
-            if (coldStart) load(model)
+            if (coldStart) loadPreferredBackend(model)
             val initializationMillis = if (coldStart) elapsedMillis(loadStarted) else 0L
-            val current = checkNotNull(loaded)
+            var current = checkNotNull(loaded)
             val generationStarted = System.nanoTime()
-            val response = current.engine.createConversation().use { conversation ->
-                suspendCancellableCoroutine<String> { continuation ->
-                    val output = StringBuilder()
-                    conversation.sendMessageAsync(
-                        Contents.of(prompt),
-                        object : MessageCallback {
-                            override fun onMessage(message: Message) { output.append(message.toString()) }
-                            override fun onDone() { if (continuation.isActive) continuation.resume(output.toString()) }
-                            override fun onError(throwable: Throwable) {
-                                if (continuation.isActive) continuation.resumeWithException(throwable)
-                            }
-                        },
-                    )
-                    continuation.invokeOnCancellation { runCatching { conversation.cancelProcess() } }
-                }
+            val response = try {
+                runConversation(current, prompt)
+            } catch (gpuFailure: Throwable) {
+                if (current.backend != "GPU") throw gpuFailure
+                closeLoaded()
+                current = loadBackend(model, Backend.CPU(), "CPU")
+                loaded = current
+                runConversation(current, prompt)
             }
             GenerationResult(response.trim(), initializationMillis, elapsedMillis(generationStarted), coldStart)
         }
     }
 
+    private suspend fun runConversation(model: LoadedModel, prompt: String): String {
+        val conversation = model.engine.createConversation()
+        try {
+            return suspendCancellableCoroutine { continuation ->
+                val output = StringBuilder()
+                conversation.sendMessageAsync(
+                    Contents.of(prompt),
+                    object : MessageCallback {
+                        override fun onMessage(message: Message) { output.append(message.toString()) }
+                        override fun onDone() { if (continuation.isActive) continuation.resume(output.toString()) }
+                        override fun onError(throwable: Throwable) {
+                            if (continuation.isActive) continuation.resumeWithException(throwable)
+                        }
+                    },
+                )
+                continuation.invokeOnCancellation { runCatching { conversation.cancelProcess() } }
+            }
+        } finally {
+            conversation.close()
+        }
+    }
+
     suspend fun unload() = withContext(Dispatchers.IO) { mutex.withLock { closeLoaded() } }
 
-    private fun load(model: RegisteredModel) {
+    private fun loadPreferredBackend(model: RegisteredModel) {
         closeLoaded()
         check(File(model.localPath).isFile) { "Service-owned model file is missing." }
-        var gpuFailure: Throwable? = null
-        val gpu = Engine(EngineConfig(modelPath = model.localPath, backend = Backend.GPU(), cacheDir = context.cacheDir.absolutePath))
-        try {
-            gpu.initialize()
-            loaded = LoadedModel(model.uri, gpu)
-            return
-        } catch (failure: Throwable) {
-            gpuFailure = failure
-            runCatching { gpu.close() }
+        val gpu = runCatching { loadBackend(model, Backend.GPU(), "GPU") }
+        loaded = gpu.getOrElse { gpuFailure ->
+            runCatching { loadBackend(model, Backend.CPU(), "CPU") }.getOrElse { cpuFailure ->
+                throw IllegalStateException(
+                    "LiteRT-LM failed on GPU and CPU. GPU: ${gpuFailure.message}; CPU: ${cpuFailure.message}",
+                    cpuFailure,
+                )
+            }
         }
-        val cpu = Engine(EngineConfig(modelPath = model.localPath, backend = Backend.CPU(), cacheDir = context.cacheDir.absolutePath))
+    }
+
+    private fun loadBackend(model: RegisteredModel, backend: Backend, name: String): LoadedModel {
+        val engine = Engine(
+            EngineConfig(
+                modelPath = model.localPath,
+                backend = backend,
+                maxNumTokens = 8192,
+            ),
+        )
         try {
-            cpu.initialize()
-            loaded = LoadedModel(model.uri, cpu)
-        } catch (cpuFailure: Throwable) {
-            runCatching { cpu.close() }
-            throw IllegalStateException(
-                "LiteRT-LM failed on GPU and CPU. GPU: ${gpuFailure?.message}; CPU: ${cpuFailure.message}",
-                cpuFailure,
-            )
+            engine.initialize()
+            return LoadedModel(model.uri, engine, name)
+        } catch (failure: Throwable) {
+            runCatching { engine.close() }
+            throw failure
         }
     }
 
