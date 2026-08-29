@@ -6,7 +6,7 @@ internal class OnDeviceInferenceProvider(
     context: Context,
     private val modelStore: ModelStore,
 ) : InferenceProvider {
-    override val id: String = "on-device"
+    override val id: String = ProviderIds.ON_DEVICE
     private val runtime = LlmRuntimeProvider.get(context)
 
     override fun profile(): ProviderProfile {
