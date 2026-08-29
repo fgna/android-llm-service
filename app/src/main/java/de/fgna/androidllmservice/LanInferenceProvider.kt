@@ -9,36 +9,35 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 internal class LanInferenceProvider(context: Context) : InferenceProvider {
-    override val id: String = "lan"
+    override val id: String = ProviderIds.LAN
     private val preferences = context.getSharedPreferences("lan-provider", Context.MODE_PRIVATE)
 
     override fun profile(): ProviderProfile {
-        val baseUrl = preferences.getString(KEY_BASE_URL, "").orEmpty().trim()
-        val model = preferences.getString(KEY_MODEL, "").orEmpty().trim()
+        val config = currentConfig()
         return ProviderProfile(
             id = id,
             label = "LAN",
-            modelName = model,
-            ready = baseUrl.isNotBlank() && model.isNotBlank(),
+            modelName = config.normalizedModel,
+            ready = config.isValid,
             supportsImage = false,
         )
     }
 
     fun configure(baseUrl: String, model: String) {
+        val config = LanProviderConfig(baseUrl, model)
+        require(config.isValid) { "LAN provider requires an http(s) base URL and non-blank model." }
         preferences.edit()
-            .putString(KEY_BASE_URL, baseUrl.trim())
-            .putString(KEY_MODEL, model.trim())
+            .putString(KEY_BASE_URL, config.normalizedBaseUrl)
+            .putString(KEY_MODEL, config.normalizedModel)
             .apply()
     }
 
     override suspend fun generate(prompt: String): GenerationResult = withContext(Dispatchers.IO) {
-        val baseUrl = preferences.getString(KEY_BASE_URL, "").orEmpty().trim()
-        val model = preferences.getString(KEY_MODEL, "").orEmpty().trim()
-        check(baseUrl.isNotBlank()) { "LAN provider base URL is not configured." }
-        check(model.isNotBlank()) { "LAN provider model is not configured." }
+        val config = currentConfig()
+        check(config.isValid) { "LAN provider is not configured with a valid http(s) base URL and model." }
 
         val request = JSONObject()
-            .put("model", model)
+            .put("model", config.normalizedModel)
             .put("stream", false)
             .put(
                 "messages",
@@ -46,7 +45,7 @@ internal class LanInferenceProvider(context: Context) : InferenceProvider {
             )
 
         val started = System.nanoTime()
-        val connection = (URL(chatCompletionsUrl(baseUrl)).openConnection() as HttpURLConnection).apply {
+        val connection = (URL(chatCompletionsUrl(config.normalizedBaseUrl)).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
             connectTimeout = 10_000
             readTimeout = 120_000
@@ -62,7 +61,9 @@ internal class LanInferenceProvider(context: Context) : InferenceProvider {
                 ?.bufferedReader(Charsets.UTF_8)
                 ?.use { it.readText() }
                 .orEmpty()
-            check(status in 200..299) { "LAN provider returned HTTP $status${responseBody.takeIf { it.isNotBlank() }?.let { ": $it" }.orEmpty()}" }
+            check(status in 200..299) {
+                "LAN provider returned HTTP $status${responseBody.takeIf { it.isNotBlank() }?.let { ": $it" }.orEmpty()}"
+            }
 
             val text = JSONObject(responseBody)
                 .getJSONArray("choices")
@@ -77,20 +78,22 @@ internal class LanInferenceProvider(context: Context) : InferenceProvider {
                 generationMillis = elapsedMillis(started),
                 coldStart = false,
                 providerId = id,
-                modelName = model,
+                modelName = config.normalizedModel,
             )
         } finally {
             connection.disconnect()
         }
     }
 
-    private fun chatCompletionsUrl(baseUrl: String): String {
-        val trimmed = baseUrl.trimEnd('/')
-        return when {
-            trimmed.endsWith("/v1/chat/completions") -> trimmed
-            trimmed.endsWith("/v1") -> "$trimmed/chat/completions"
-            else -> "$trimmed/v1/chat/completions"
-        }
+    private fun currentConfig() = LanProviderConfig(
+        baseUrl = preferences.getString(KEY_BASE_URL, "").orEmpty(),
+        model = preferences.getString(KEY_MODEL, "").orEmpty(),
+    )
+
+    private fun chatCompletionsUrl(baseUrl: String): String = when {
+        baseUrl.endsWith("/v1/chat/completions") -> baseUrl
+        baseUrl.endsWith("/v1") -> "$baseUrl/chat/completions"
+        else -> "$baseUrl/v1/chat/completions"
     }
 
     private fun elapsedMillis(startedAtNanos: Long): Long =
