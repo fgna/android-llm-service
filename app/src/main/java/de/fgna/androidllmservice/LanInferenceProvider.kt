@@ -24,7 +24,7 @@ internal class LanInferenceProvider(context: Context) : InferenceProvider {
     }
 
     fun configure(baseUrl: String, model: String) {
-        val config = LanProviderConfig(baseUrl, model)
+        val config = LanProviderConfig(baseUrl, model.ifBlank { AUTO_MODEL })
         require(config.isValid) { "LAN provider requires an http(s) base URL and non-blank model." }
         preferences.edit()
             .putString(KEY_BASE_URL, config.normalizedBaseUrl)
@@ -35,9 +35,10 @@ internal class LanInferenceProvider(context: Context) : InferenceProvider {
     override suspend fun generate(prompt: String): GenerationResult = withContext(Dispatchers.IO) {
         val config = currentConfig()
         check(config.isValid) { "LAN provider is not configured with a valid http(s) base URL and model." }
+        val resolvedModel = resolveModel(config)
 
         val request = JSONObject()
-            .put("model", config.normalizedModel)
+            .put("model", resolvedModel)
             .put("stream", false)
             .put(
                 "messages",
@@ -78,8 +79,33 @@ internal class LanInferenceProvider(context: Context) : InferenceProvider {
                 generationMillis = elapsedMillis(started),
                 coldStart = false,
                 providerId = id,
-                modelName = config.normalizedModel,
+                modelName = resolvedModel,
             )
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun resolveModel(config: LanProviderConfig): String {
+        if (!config.normalizedModel.equals(AUTO_MODEL, ignoreCase = true)) return config.normalizedModel
+
+        val connection = (URL(modelsUrl(config.normalizedBaseUrl)).openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = 5_000
+            readTimeout = 5_000
+            setRequestProperty("Accept", "application/json")
+        }
+        try {
+            val status = connection.responseCode
+            val responseBody = (if (status in 200..299) connection.inputStream else connection.errorStream)
+                ?.bufferedReader(Charsets.UTF_8)
+                ?.use { it.readText() }
+                .orEmpty()
+            check(status in 200..299) { "LAN model discovery returned HTTP $status" }
+            val models = JSONObject(responseBody).optJSONArray("data")
+            val model = models?.optJSONObject(0)?.optString("id").orEmpty().trim()
+            check(model.isNotBlank()) { "LAN model discovery returned no models." }
+            return model
         } finally {
             connection.disconnect()
         }
@@ -96,11 +122,18 @@ internal class LanInferenceProvider(context: Context) : InferenceProvider {
         else -> "$baseUrl/v1/chat/completions"
     }
 
+    private fun modelsUrl(baseUrl: String): String = when {
+        baseUrl.endsWith("/v1/chat/completions") -> baseUrl.removeSuffix("/chat/completions") + "/models"
+        baseUrl.endsWith("/v1") -> "$baseUrl/models"
+        else -> "$baseUrl/v1/models"
+    }
+
     private fun elapsedMillis(startedAtNanos: Long): Long =
         (System.nanoTime() - startedAtNanos) / 1_000_000
 
     private companion object {
         const val KEY_BASE_URL = "base-url"
         const val KEY_MODEL = "model"
+        const val AUTO_MODEL = "auto"
     }
 }
