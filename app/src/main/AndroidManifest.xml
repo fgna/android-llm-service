@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.INTERNET" />
 
     <permission
         android:name="de.fgna.androidllmservice.permission.BIND_LLM_SERVICE"
@@ -10,7 +11,8 @@
         android:allowBackup="false"
         android:label="Android LLM Service"
         android:supportsRtl="true"
-        android:theme="@style/Theme.AndroidLlmService">
+        android:theme="@style/Theme.AndroidLlmService"
+        android:usesCleartextTraffic="true">
 
         <uses-native-library android:name="libvndksupport.so" android:required="false" />
         <uses-native-library android:name="libOpenCL.so" android:required="false" />
