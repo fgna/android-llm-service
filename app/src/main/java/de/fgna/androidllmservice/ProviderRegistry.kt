@@ -18,15 +18,19 @@ internal class ProviderRegistry(context: Context, modelStore: ModelStore) {
         lan.configure(baseUrl, model)
     }
 
-    fun profilesJson(): String = JSONArray(
-        listOf(onDevice.profile(), lan.profile()).map { profile ->
-            JSONObject()
-                .put("id", profile.id)
-                .put("label", profile.label)
-                .put("modelName", profile.modelName)
-                .put("ready", profile.ready)
-                .put("supportsText", profile.supportsText)
-                .put("supportsImage", profile.supportsImage)
-        },
-    ).toString()
+    fun profilesJson(): String {
+        val array = JSONArray()
+        listOf(onDevice.profile(), lan.profile()).forEach { profile ->
+            array.put(
+                JSONObject()
+                    .put("id", profile.id)
+                    .put("label", profile.label)
+                    .put("modelName", profile.modelName)
+                    .put("ready", profile.ready)
+                    .put("supportsText", profile.supportsText)
+                    .put("supportsImage", profile.supportsImage),
+            )
+        }
+        return array.toString()
+    }
 }
