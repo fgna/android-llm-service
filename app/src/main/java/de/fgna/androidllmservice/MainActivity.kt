@@ -9,14 +9,19 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -27,6 +32,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
+import de.fgna.androidllmservice.ui.LlmCompactMeta
+import de.fgna.androidllmservice.ui.LlmContextStrip
+import de.fgna.androidllmservice.ui.LlmHairlineSurface
+import de.fgna.androidllmservice.ui.LlmIndicatorState
+import de.fgna.androidllmservice.ui.LlmSectionLabel
+import de.fgna.androidllmservice.ui.LlmServiceTheme
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -37,8 +48,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            MaterialTheme {
-                Surface(modifier = Modifier.fillMaxSize()) {
+            LlmServiceTheme {
+                Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     AppScreen(
                         initialModel = modelStore.current(),
                         onRegisterModel = ::registerModel,
@@ -91,10 +102,12 @@ private fun AppScreen(
     var status by remember { mutableStateOf("Bereit") }
     var diagnostic by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
+    var failed by remember { mutableStateOf(false) }
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             busy = true
+            failed = false
             status = "Modell wird importiert …"
             response = ""
             diagnostic = ""
@@ -102,103 +115,222 @@ private fun AppScreen(
                 busy = false
                 result.onSuccess {
                     model = it
-                    status = "Modell importiert. Android LLM Service besitzt die zentrale Modellkopie."
-                }.onFailure { status = it.message ?: "Modell konnte nicht importiert werden." }
+                    failed = false
+                    status = "Modell importiert"
+                }.onFailure {
+                    failed = true
+                    status = it.message ?: "Modell konnte nicht importiert werden."
+                }
             }
         }
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(20.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        Text("Android LLM Service", style = MaterialTheme.typography.headlineMedium)
-        Text("M1 · Eine zentrale lokale .litertlm-Modellkopie für gemeinsame Inferenz bereitstellen.")
-        Text("Modell", style = MaterialTheme.typography.titleMedium)
-        val current = model
-        if (current == null) {
-            Text("Kein Modell importiert")
-        } else {
-            Text(current.displayName)
-            current.sizeBytes?.let { Text(formatSize(it), style = MaterialTheme.typography.bodySmall) }
-            Text(current.uri.toString(), style = MaterialTheme.typography.bodySmall)
-        }
+    val current = model
+    val headerState = when {
+        failed -> LlmIndicatorState.Warning
+        busy -> LlmIndicatorState.Neutral
+        current != null -> LlmIndicatorState.Positive
+        else -> LlmIndicatorState.Neutral
+    }
+    val headerLabel = when {
+        failed -> "Fehler"
+        busy -> status
+        current != null -> "Modell bereit"
+        else -> "Kein Modell"
+    }
 
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Button(enabled = !busy, onClick = { picker.launch(arrayOf("*/*")) }) {
-                Text(if (current == null) "Modell auswählen" else "Modell wechseln")
-            }
-            if (current != null) {
-                Button(enabled = !busy, onClick = {
-                    busy = true
-                    onClearModel {
-                        model = null
-                        response = ""
-                        diagnostic = ""
-                        status = "Zentrale Modellkopie entfernt"
-                        busy = false
-                    }
-                }) { Text("Entfernen") }
-            }
-        }
-
-        if (current != null) {
-            Button(enabled = !busy, onClick = {
-                busy = true
-                diagnostic = ""
-                status = "Modelldatei wird geprüft …"
-                onDiagnose(current) { result ->
-                    busy = false
-                    result.onSuccess {
-                        diagnostic = buildString {
-                            appendLine("SAF-Größe: ${it.declaredSizeBytes ?: -1}")
-                            appendLine("FD-Größe: ${it.descriptorSizeBytes}")
-                            appendLine("/proc/self/fd lesbar: ${it.procFdReadable}")
-                            appendLine("Erste 1 MiB identisch: ${it.procFdFirstBytesMatch}")
-                            appendLine("SHA-256 erste 1 MiB: ${it.firstMiBSha256}")
-                            append("Header: ${it.firstBytesHex}")
+    Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
+        topBar = {
+            Surface(modifier = Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.surface) {
+                Column(modifier = Modifier.statusBarsPadding()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 9.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                            Text("Android LLM Service", style = MaterialTheme.typography.titleLarge)
+                            LlmContextStrip(headerLabel, state = headerState)
                         }
-                        status = "Diagnose abgeschlossen"
-                    }.onFailure { status = it.message ?: "Diagnose fehlgeschlagen" }
+                        Spacer(modifier = Modifier.weight(1f))
+                    }
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 }
-            }) { Text("Modelldatei prüfen") }
-        }
+            }
+        },
+    ) { innerPadding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            LlmHairlineSurface(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Row(modifier = Modifier.fillMaxWidth()) {
+                        LlmSectionLabel("Modell", modifier = Modifier.weight(1f))
+                        Text(
+                            if (current == null) "Nicht konfiguriert" else "Zentrale Kopie aktiv",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
 
-        if (diagnostic.isNotBlank()) Text(diagnostic, style = MaterialTheme.typography.bodySmall)
+                    if (current == null) {
+                        Text("Kein Modell importiert.", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            "Der Service verwaltet eine zentrale lokale .litertlm-Modellkopie für alle Clients.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    } else {
+                        Text(current.displayName, style = MaterialTheme.typography.titleMedium)
+                        current.sizeBytes?.let { LlmCompactMeta("Größe", formatSize(it)) }
+                        LlmCompactMeta("URI", current.uri.toString())
+                    }
 
-        OutlinedTextField(
-            value = prompt,
-            onValueChange = { prompt = it },
-            label = { Text("Prompt") },
-            modifier = Modifier.fillMaxWidth(),
-            enabled = !busy,
-            minLines = 4,
-        )
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Button(
+                            modifier = Modifier.weight(1f),
+                            enabled = !busy,
+                            onClick = { picker.launch(arrayOf("*/*")) },
+                        ) {
+                            Text(if (current == null) "Modell auswählen" else "Modell wechseln")
+                        }
+                        if (current != null) {
+                            OutlinedButton(
+                                enabled = !busy,
+                                onClick = {
+                                    busy = true
+                                    failed = false
+                                    status = "Modell wird entfernt …"
+                                    onClearModel {
+                                        model = null
+                                        response = ""
+                                        diagnostic = ""
+                                        status = "Zentrale Modellkopie entfernt"
+                                        busy = false
+                                    }
+                                },
+                            ) { Text("Entfernen") }
+                        }
+                    }
 
-        Button(
-            enabled = current != null && prompt.isNotBlank() && !busy,
-            onClick = {
-                val selected = current ?: return@Button
-                busy = true
-                response = ""
-                status = "LiteRT-LM läuft …"
-                onGenerate(selected, prompt) { result ->
-                    busy = false
-                    result.onSuccess {
-                        response = it.text.ifBlank { "(Leere Antwort)" }
-                        status = "${if (it.coldStart) "Cold start" else "Warm"}: Init ${it.initializationMillis} ms · Generation ${it.generationMillis} ms"
-                    }.onFailure { status = it.message ?: "Inferenz fehlgeschlagen" }
+                    if (current != null) {
+                        OutlinedButton(
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = !busy,
+                            onClick = {
+                                busy = true
+                                failed = false
+                                diagnostic = ""
+                                status = "Modelldatei wird geprüft …"
+                                onDiagnose(current) { result ->
+                                    busy = false
+                                    result.onSuccess {
+                                        diagnostic = buildString {
+                                            appendLine("SAF-Größe: ${it.declaredSizeBytes ?: -1}")
+                                            appendLine("FD-Größe: ${it.descriptorSizeBytes}")
+                                            appendLine("/proc/self/fd lesbar: ${it.procFdReadable}")
+                                            appendLine("Erste 1 MiB identisch: ${it.procFdFirstBytesMatch}")
+                                            appendLine("SHA-256 erste 1 MiB: ${it.firstMiBSha256}")
+                                            append("Header: ${it.firstBytesHex}")
+                                        }
+                                        failed = false
+                                        status = "Diagnose abgeschlossen"
+                                    }.onFailure {
+                                        failed = true
+                                        status = it.message ?: "Diagnose fehlgeschlagen"
+                                    }
+                                }
+                            },
+                        ) { Text("Modelldatei prüfen") }
+                    }
+
+                    if (diagnostic.isNotBlank()) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        Text(diagnostic, style = MaterialTheme.typography.bodySmall)
+                    }
                 }
-            },
-        ) { Text("Lokal ausführen") }
+            }
 
-        Text(status, style = MaterialTheme.typography.bodySmall)
-        if (response.isNotBlank()) {
-            Text("Antwort", style = MaterialTheme.typography.titleMedium)
-            Text(response)
+            LlmHairlineSurface(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Row(modifier = Modifier.fillMaxWidth()) {
+                        LlmSectionLabel("Prompt", modifier = Modifier.weight(1f))
+                        Text(
+                            if (current == null) "Modell erforderlich" else "Lokale Inferenz",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    OutlinedTextField(
+                        value = prompt,
+                        onValueChange = { prompt = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !busy,
+                        minLines = 5,
+                        maxLines = 8,
+                        textStyle = MaterialTheme.typography.bodyMedium,
+                    )
+                    Button(
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = current != null && prompt.isNotBlank() && !busy,
+                        onClick = {
+                            val selected = current ?: return@Button
+                            busy = true
+                            failed = false
+                            response = ""
+                            status = "LiteRT-LM läuft …"
+                            onGenerate(selected, prompt) { result ->
+                                busy = false
+                                result.onSuccess {
+                                    response = it.text.ifBlank { "(Leere Antwort)" }
+                                    failed = false
+                                    status = "${if (it.coldStart) "Cold start" else "Warm"} · Init ${it.initializationMillis} ms · Generation ${it.generationMillis} ms"
+                                }.onFailure {
+                                    failed = true
+                                    status = it.message ?: "Inferenz fehlgeschlagen"
+                                }
+                            }
+                        },
+                    ) { Text(if (busy) "Läuft …" else "Lokal ausführen") }
+                }
+            }
+
+            LlmHairlineSurface(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Row(modifier = Modifier.fillMaxWidth()) {
+                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            LlmSectionLabel("Output")
+                            Text(
+                                status,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = when {
+                                    failed -> MaterialTheme.colorScheme.error
+                                    response.isNotBlank() -> MaterialTheme.colorScheme.tertiary
+                                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                            )
+                        }
+                    }
+                    Text(
+                        response.ifBlank { if (busy) "Inferenz läuft …" else "Noch keine Antwort." },
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+            }
         }
     }
 }
