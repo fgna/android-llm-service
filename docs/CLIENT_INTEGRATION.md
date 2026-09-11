@@ -34,7 +34,7 @@ void generateWithImage(String prompt, in ParcelFileDescriptor image, ILlmCallbac
 
 ## Client manifest
 
-Clients should declare the service permission and package visibility:
+Clients must declare the service permission and package visibility:
 
 ```xml
 <uses-permission android:name="de.fgna.androidllmservice.permission.BIND_LLM_SERVICE" />
@@ -44,7 +44,7 @@ Clients should declare the service permission and package visibility:
 </queries>
 ```
 
-The permission declaration is also used by Android LLM Service to discover candidate client apps in its management UI.
+The permission uses Android's `normal` protection level so independently signed clients can request it. The Binder service requires the permission directly on the service component; no extra approval flow is used.
 
 ## Binding example
 
@@ -62,44 +62,14 @@ val bound = context.bindService(
 )
 ```
 
-Binding can succeed before the client is authorized. Treat Binder calls as the authorization boundary and handle `SecurityException`.
-
-## Authorization flow
-
-Android LLM Service supports two trust paths:
-
-1. **Same signing certificate:** access is automatic.
-2. **Independent signing certificate:** the installed client appears under **Clients** in the service UI and the user explicitly approves it.
-
-Approval is tied to both package name and the current SHA-256 signing-certificate fingerprint. If the app is later replaced by a build signed with a different certificate, the old approval no longer applies.
-
-Recommended first-run flow for an independently signed client:
-
-1. Check whether Android LLM Service is installed.
-2. Bind to the service.
-3. Call `isModelReady()` inside a `try/catch` for `SecurityException`.
-4. If denied, tell the user to open Android LLM Service and approve this client under **Clients**.
-5. Retry when the user returns.
-
-Example:
-
-```kotlin
-val ready = try {
-    service.isModelReady
-} catch (_: SecurityException) {
-    showMessage("Open Android LLM Service and approve this app under Clients.")
-    false
-}
-```
-
-Do not treat a successful `bindService()` call as proof that the client is authorized.
+If the client does not declare `de.fgna.androidllmservice.permission.BIND_LLM_SERVICE`, Android rejects access to the exported service. A client that declares the permission can bind without any package-specific or certificate-specific approval step.
 
 ## Runtime behavior
 
 Clients should expect these states and handle them explicitly:
 
 1. Service package is not installed.
-2. Service exists but this client has not been approved yet.
+2. Service is installed but cannot be bound, for example because the permission declaration is missing.
 3. Service is available but no model is registered.
 4. Model is ready and generation can be requested.
 5. Runtime initialization or generation fails and the callback returns an error.
@@ -124,7 +94,7 @@ If a future breaking change is unavoidable, introduce an explicit versioned cont
 When local inference is required, show actionable states rather than generic errors. Useful messages include:
 
 - Android LLM Service is not installed.
-- This app is not yet approved. Open Android LLM Service → Clients and approve it.
+- Android LLM Service cannot be accessed; verify the client declares the Binder permission.
 - Open Android LLM Service and select a model first.
 - Local inference failed; open the service diagnostics for details.
 
