@@ -1,0 +1,36 @@
+# Gradle / Android build output
+.gradle/
+build/
+**/build/
+
+# Local Android SDK configuration
+local.properties
+
+# IDE files
+.idea/
+*.iml
+.vscode/
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# Android packages / native build output
+*.apk
+*.aab
+*.ap_
+.externalNativeBuild/
+.cxx/
+
+# Signing material
+*.jks
+*.keystore
+*.p12
+*.pem
+*.key
+
+# Logs / temp files
+*.log
+*.tmp

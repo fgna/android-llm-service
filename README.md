@@ -6,6 +6,10 @@ Android LLM Service keeps local inference behind one stable Android-facing bound
 
 The current baseline is intentionally focused: one registered `.litertlm` model, local inference on the phone, a Binder/AIDL API, diagnostics, permission-based client access, and a small management UI. LAN and external API providers are future extensions rather than requirements for the baseline service.
 
+## Screenshot
+
+![Android LLM Service management UI](docs/screenshots/android-llm-service-en.png)
+
 ## What it does
 
 - Registers an existing `.litertlm` model through Android's Storage Access Framework.
@@ -133,6 +137,10 @@ The on-device Binder service is the completed baseline version:
 - management/test UI: complete
 
 Possible later extensions include trusted-LAN model servers, explicit external API providers and richer capability reporting.
+
+## Maintenance and releases
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for contribution guidance, [`CHANGELOG.md`](CHANGELOG.md) for notable changes, and [`docs/RELEASING.md`](docs/RELEASING.md) for the release process.
 
 ## License
 
