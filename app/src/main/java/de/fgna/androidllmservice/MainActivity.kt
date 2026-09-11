@@ -38,6 +38,7 @@ import de.fgna.androidllmservice.ui.LlmHairlineSurface
 import de.fgna.androidllmservice.ui.LlmIndicatorState
 import de.fgna.androidllmservice.ui.LlmSectionLabel
 import de.fgna.androidllmservice.ui.LlmServiceTheme
+import java.util.Locale
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -110,11 +111,21 @@ private fun AppScreen(
     onDiagnose: (RegisteredModel, (Result<ModelDiagnosticResult>) -> Unit) -> Unit,
     onSetClientApproved: (String, Boolean, (List<ClientAuthorization>) -> Unit) -> Unit,
 ) {
+    val isGerman = Locale.getDefault().language == "de"
+    fun tr(de: String, en: String): String = if (isGerman) de else en
+
     var model by remember { mutableStateOf(initialModel) }
     var clients by remember { mutableStateOf(initialClients) }
-    var prompt by remember { mutableStateOf("Antworte kurz auf Deutsch: Nenne drei Vorteile lokaler LLMs auf einem Smartphone.") }
+    var prompt by remember(isGerman) {
+        mutableStateOf(
+            tr(
+                "Antworte kurz auf Deutsch: Nenne drei Vorteile lokaler LLMs auf einem Smartphone.",
+                "Answer briefly in English: Name three advantages of local LLMs on a smartphone.",
+            ),
+        )
+    }
     var response by remember { mutableStateOf("") }
-    var status by remember { mutableStateOf("Bereit") }
+    var status by remember(isGerman) { mutableStateOf(tr("Bereit", "Ready")) }
     var diagnostic by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var failed by remember { mutableStateOf(false) }
@@ -123,7 +134,7 @@ private fun AppScreen(
         if (uri != null) {
             busy = true
             failed = false
-            status = "Modell wird importiert …"
+            status = tr("Modell wird importiert …", "Importing model …")
             response = ""
             diagnostic = ""
             onRegisterModel(uri) { result ->
@@ -131,10 +142,10 @@ private fun AppScreen(
                 result.onSuccess {
                     model = it
                     failed = false
-                    status = "Modell importiert"
+                    status = tr("Modell importiert", "Model imported")
                 }.onFailure {
                     failed = true
-                    status = it.message ?: "Modell konnte nicht importiert werden."
+                    status = it.message ?: tr("Modell konnte nicht importiert werden.", "Model could not be imported.")
                 }
             }
         }
@@ -148,10 +159,10 @@ private fun AppScreen(
         else -> LlmIndicatorState.Neutral
     }
     val headerLabel = when {
-        failed -> "Fehler"
+        failed -> tr("Fehler", "Error")
         busy -> status
-        current != null -> "Modell bereit"
-        else -> "Kein Modell"
+        current != null -> tr("Modell bereit", "Model ready")
+        else -> tr("Kein Modell", "No model")
     }
 
     Scaffold(
@@ -188,24 +199,27 @@ private fun AppScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Row(modifier = Modifier.fillMaxWidth()) {
-                        LlmSectionLabel("Modell", modifier = Modifier.weight(1f))
+                        LlmSectionLabel(tr("Modell", "Model"), modifier = Modifier.weight(1f))
                         Text(
-                            if (current == null) "Nicht konfiguriert" else "Zentrale Kopie aktiv",
+                            if (current == null) tr("Nicht konfiguriert", "Not configured") else tr("Zentrale Kopie aktiv", "Shared copy active"),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
 
                     if (current == null) {
-                        Text("Kein Modell importiert.", style = MaterialTheme.typography.bodyMedium)
+                        Text(tr("Kein Modell importiert.", "No model imported."), style = MaterialTheme.typography.bodyMedium)
                         Text(
-                            "Der Service verwaltet eine zentrale lokale .litertlm-Modellkopie für alle Clients.",
+                            tr(
+                                "Der Service verwaltet eine zentrale lokale .litertlm-Modellkopie für alle Clients.",
+                                "The service manages one shared local .litertlm model copy for all clients.",
+                            ),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     } else {
                         Text(current.displayName, style = MaterialTheme.typography.titleMedium)
-                        current.sizeBytes?.let { LlmCompactMeta("Größe", formatSize(it)) }
+                        current.sizeBytes?.let { LlmCompactMeta(tr("Größe", "Size"), formatSize(it)) }
                         LlmCompactMeta("URI", current.uri.toString())
                     }
 
@@ -215,7 +229,7 @@ private fun AppScreen(
                             enabled = !busy,
                             onClick = { picker.launch(arrayOf("*/*")) },
                         ) {
-                            Text(if (current == null) "Modell auswählen" else "Modell wechseln")
+                            Text(if (current == null) tr("Modell auswählen", "Select model") else tr("Modell wechseln", "Change model"))
                         }
                         if (current != null) {
                             OutlinedButton(
@@ -223,16 +237,16 @@ private fun AppScreen(
                                 onClick = {
                                     busy = true
                                     failed = false
-                                    status = "Modell wird entfernt …"
+                                    status = tr("Modell wird entfernt …", "Removing model …")
                                     onClearModel {
                                         model = null
                                         response = ""
                                         diagnostic = ""
-                                        status = "Zentrale Modellkopie entfernt"
+                                        status = tr("Zentrale Modellkopie entfernt", "Shared model copy removed")
                                         busy = false
                                     }
                                 },
-                            ) { Text("Entfernen") }
+                            ) { Text(tr("Entfernen", "Remove")) }
                         }
                     }
 
@@ -244,27 +258,27 @@ private fun AppScreen(
                                 busy = true
                                 failed = false
                                 diagnostic = ""
-                                status = "Modelldatei wird geprüft …"
+                                status = tr("Modelldatei wird geprüft …", "Checking model file …")
                                 onDiagnose(current) { result ->
                                     busy = false
                                     result.onSuccess {
                                         diagnostic = buildString {
-                                            appendLine("SAF-Größe: ${it.declaredSizeBytes ?: -1}")
-                                            appendLine("FD-Größe: ${it.descriptorSizeBytes}")
-                                            appendLine("/proc/self/fd lesbar: ${it.procFdReadable}")
-                                            appendLine("Erste 1 MiB identisch: ${it.procFdFirstBytesMatch}")
-                                            appendLine("SHA-256 erste 1 MiB: ${it.firstMiBSha256}")
+                                            appendLine("${tr("SAF-Größe", "SAF size")}: ${it.declaredSizeBytes ?: -1}")
+                                            appendLine("${tr("FD-Größe", "FD size")}: ${it.descriptorSizeBytes}")
+                                            appendLine("/proc/self/fd ${tr("lesbar", "readable")}: ${it.procFdReadable}")
+                                            appendLine("${tr("Erste 1 MiB identisch", "First 1 MiB identical")}: ${it.procFdFirstBytesMatch}")
+                                            appendLine("SHA-256 ${tr("erste 1 MiB", "first 1 MiB")}: ${it.firstMiBSha256}")
                                             append("Header: ${it.firstBytesHex}")
                                         }
                                         failed = false
-                                        status = "Diagnose abgeschlossen"
+                                        status = tr("Diagnose abgeschlossen", "Diagnostics complete")
                                     }.onFailure {
                                         failed = true
-                                        status = it.message ?: "Diagnose fehlgeschlagen"
+                                        status = it.message ?: tr("Diagnose fehlgeschlagen", "Diagnostics failed")
                                     }
                                 }
                             },
-                        ) { Text("Modelldatei prüfen") }
+                        ) { Text(tr("Modelldatei prüfen", "Check model file")) }
                     }
 
                     if (diagnostic.isNotBlank()) {
@@ -282,16 +296,19 @@ private fun AppScreen(
                     Row(modifier = Modifier.fillMaxWidth()) {
                         LlmSectionLabel("Clients", modifier = Modifier.weight(1f))
                         Text(
-                            "${clients.count { it.approved }} freigegeben",
+                            tr("${clients.count { it.approved }} freigegeben", "${clients.count { it.approved }} approved"),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
 
                     if (clients.isEmpty()) {
-                        Text("Keine Client-App gefunden.", style = MaterialTheme.typography.bodyMedium)
+                        Text(tr("Keine Client-App gefunden.", "No client app found."), style = MaterialTheme.typography.bodyMedium)
                         Text(
-                            "Client-Apps erscheinen hier, sobald sie die Binder-Berechtigung im Manifest deklarieren.",
+                            tr(
+                                "Client-Apps erscheinen hier nach einem ersten Verbindungsversuch mit dem Service.",
+                                "Client apps appear here after their first connection attempt to the service.",
+                            ),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -310,13 +327,13 @@ private fun AppScreen(
                                         verticalArrangement = Arrangement.spacedBy(3.dp),
                                     ) {
                                         Text(client.label, style = MaterialTheme.typography.titleMedium)
-                                        LlmCompactMeta("Paket", client.packageName)
-                                        LlmCompactMeta("Zertifikat", formatFingerprint(client.certificateSha256))
+                                        LlmCompactMeta(tr("Paket", "Package"), client.packageName)
+                                        LlmCompactMeta(tr("Zertifikat", "Certificate"), formatFingerprint(client.certificateSha256))
                                         Text(
                                             when {
-                                                client.sameSigner -> "Automatisch freigegeben · gleiche Signatur"
-                                                client.approved -> "Vom Nutzer freigegeben"
-                                                else -> "Nicht freigegeben"
+                                                client.sameSigner -> tr("Automatisch freigegeben · gleiche Signatur", "Automatically approved · same signature")
+                                                client.approved -> tr("Vom Nutzer freigegeben", "Approved by user")
+                                                else -> tr("Nicht freigegeben", "Not approved")
                                             },
                                             style = MaterialTheme.typography.bodySmall,
                                             color = if (client.approved) {
@@ -333,13 +350,13 @@ private fun AppScreen(
                                                 onClick = {
                                                     onSetClientApproved(client.packageName, false) { clients = it }
                                                 },
-                                            ) { Text("Entziehen") }
+                                            ) { Text(tr("Entziehen", "Revoke")) }
                                         } else {
                                             Button(
                                                 onClick = {
                                                     onSetClientApproved(client.packageName, true) { clients = it }
                                                 },
-                                            ) { Text("Freigeben") }
+                                            ) { Text(tr("Freigeben", "Approve")) }
                                         }
                                     }
                                 }
@@ -357,7 +374,7 @@ private fun AppScreen(
                     Row(modifier = Modifier.fillMaxWidth()) {
                         LlmSectionLabel("Prompt", modifier = Modifier.weight(1f))
                         Text(
-                            if (current == null) "Modell erforderlich" else "Lokale Inferenz",
+                            if (current == null) tr("Modell erforderlich", "Model required") else tr("Lokale Inferenz", "Local inference"),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -379,20 +396,20 @@ private fun AppScreen(
                             busy = true
                             failed = false
                             response = ""
-                            status = "LiteRT-LM läuft …"
+                            status = tr("LiteRT-LM läuft …", "LiteRT-LM running …")
                             onGenerate(selected, prompt) { result ->
                                 busy = false
                                 result.onSuccess {
-                                    response = it.text.ifBlank { "(Leere Antwort)" }
+                                    response = it.text.ifBlank { tr("(Leere Antwort)", "(Empty response)") }
                                     failed = false
                                     status = "${if (it.coldStart) "Cold start" else "Warm"} · Init ${it.initializationMillis} ms · Generation ${it.generationMillis} ms"
                                 }.onFailure {
                                     failed = true
-                                    status = it.message ?: "Inferenz fehlgeschlagen"
+                                    status = it.message ?: tr("Inferenz fehlgeschlagen", "Inference failed")
                                 }
                             }
                         },
-                    ) { Text(if (busy) "Läuft …" else "Lokal ausführen") }
+                    ) { Text(if (busy) tr("Läuft …", "Running …") else tr("Lokal ausführen", "Run locally")) }
                 }
             }
 
@@ -416,7 +433,7 @@ private fun AppScreen(
                         }
                     }
                     Text(
-                        response.ifBlank { if (busy) "Inferenz läuft …" else "Noch keine Antwort." },
+                        response.ifBlank { if (busy) tr("Inferenz läuft …", "Inference running …") else tr("Noch keine Antwort.", "No response yet.") },
                         style = MaterialTheme.typography.bodyMedium,
                     )
                 }
