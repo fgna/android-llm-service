@@ -44,6 +44,7 @@ class MainActivity : ComponentActivity() {
     private val modelStore by lazy { ModelStore(this) }
     private val runtime by lazy { LlmRuntimeProvider.get(this) }
     private val diagnostics by lazy { ModelDiagnostics(this) }
+    private val clientAuthorizations by lazy { ClientAuthorizationStore(this) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -52,10 +53,12 @@ class MainActivity : ComponentActivity() {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     AppScreen(
                         initialModel = modelStore.current(),
+                        initialClients = clientAuthorizations.clients(),
                         onRegisterModel = ::registerModel,
                         onClearModel = ::clearModel,
                         onGenerate = ::generate,
                         onDiagnose = ::diagnose,
+                        onSetClientApproved = ::setClientApproved,
                     )
                 }
             }
@@ -86,17 +89,29 @@ class MainActivity : ComponentActivity() {
     private fun diagnose(model: RegisteredModel, callback: (Result<ModelDiagnosticResult>) -> Unit) {
         lifecycleScope.launch { callback(runCatching { diagnostics.inspect(model) }) }
     }
+
+    private fun setClientApproved(
+        packageName: String,
+        approved: Boolean,
+        callback: (List<ClientAuthorization>) -> Unit,
+    ) {
+        clientAuthorizations.setApproved(packageName, approved)
+        callback(clientAuthorizations.clients())
+    }
 }
 
 @Composable
 private fun AppScreen(
     initialModel: RegisteredModel?,
+    initialClients: List<ClientAuthorization>,
     onRegisterModel: (Uri, (Result<RegisteredModel>) -> Unit) -> Unit,
     onClearModel: ((() -> Unit) -> Unit),
     onGenerate: (RegisteredModel, String, (Result<GenerationResult>) -> Unit) -> Unit,
     onDiagnose: (RegisteredModel, (Result<ModelDiagnosticResult>) -> Unit) -> Unit,
+    onSetClientApproved: (String, Boolean, (List<ClientAuthorization>) -> Unit) -> Unit,
 ) {
     var model by remember { mutableStateOf(initialModel) }
+    var clients by remember { mutableStateOf(initialClients) }
     var prompt by remember { mutableStateOf("Antworte kurz auf Deutsch: Nenne drei Vorteile lokaler LLMs auf einem Smartphone.") }
     var response by remember { mutableStateOf("") }
     var status by remember { mutableStateOf("Bereit") }
@@ -265,6 +280,81 @@ private fun AppScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Row(modifier = Modifier.fillMaxWidth()) {
+                        LlmSectionLabel("Clients", modifier = Modifier.weight(1f))
+                        Text(
+                            "${clients.count { it.approved }} freigegeben",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+
+                    if (clients.isEmpty()) {
+                        Text("Keine Client-App gefunden.", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            "Client-Apps erscheinen hier, sobald sie die Binder-Berechtigung im Manifest deklarieren.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    } else {
+                        clients.forEachIndexed { index, client ->
+                            if (index > 0) {
+                                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                            }
+                            Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    Column(
+                                        modifier = Modifier.weight(1f),
+                                        verticalArrangement = Arrangement.spacedBy(3.dp),
+                                    ) {
+                                        Text(client.label, style = MaterialTheme.typography.titleMedium)
+                                        LlmCompactMeta("Paket", client.packageName)
+                                        LlmCompactMeta("Zertifikat", formatFingerprint(client.certificateSha256))
+                                        Text(
+                                            when {
+                                                client.sameSigner -> "Automatisch freigegeben · gleiche Signatur"
+                                                client.approved -> "Vom Nutzer freigegeben"
+                                                else -> "Nicht freigegeben"
+                                            },
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = if (client.approved) {
+                                                MaterialTheme.colorScheme.tertiary
+                                            } else {
+                                                MaterialTheme.colorScheme.onSurfaceVariant
+                                            },
+                                        )
+                                    }
+
+                                    if (!client.sameSigner) {
+                                        if (client.approved) {
+                                            OutlinedButton(
+                                                onClick = {
+                                                    onSetClientApproved(client.packageName, false) { clients = it }
+                                                },
+                                            ) { Text("Entziehen") }
+                                        } else {
+                                            Button(
+                                                onClick = {
+                                                    onSetClientApproved(client.packageName, true) { clients = it }
+                                                },
+                                            ) { Text("Freigeben") }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            LlmHairlineSurface(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Row(modifier = Modifier.fillMaxWidth()) {
                         LlmSectionLabel("Prompt", modifier = Modifier.weight(1f))
                         Text(
                             if (current == null) "Modell erforderlich" else "Lokale Inferenz",
@@ -336,3 +426,6 @@ private fun AppScreen(
 }
 
 private fun formatSize(bytes: Long): String = String.format("%.2f GB", bytes / 1024.0 / 1024.0 / 1024.0)
+
+private fun formatFingerprint(fingerprint: String): String =
+    if (fingerprint.length <= 20) fingerprint else "${fingerprint.take(20)}…"
