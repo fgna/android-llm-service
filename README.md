@@ -4,7 +4,7 @@ A small Android service that provides one shared on-device LLM runtime to multip
 
 Android LLM Service keeps local inference behind one stable Android-facing boundary. Client apps can submit text or image-assisted prompts without embedding their own LiteRT-LM runtime or maintaining another multi-gigabyte model copy.
 
-The current baseline is intentionally focused: one registered `.litertlm` model, local inference on the phone, a Binder/AIDL API, diagnostics, client authorization, and a small management UI. LAN and external API providers are future extensions rather than requirements for the baseline service.
+The current baseline is intentionally focused: one registered `.litertlm` model, local inference on the phone, a Binder/AIDL API, diagnostics, permission-based client access, and a small management UI. LAN and external API providers are future extensions rather than requirements for the baseline service.
 
 ## What it does
 
@@ -13,21 +13,18 @@ The current baseline is intentionally focused: one registered `.litertlm` model,
 - Runs local inference through LiteRT-LM, preferring GPU and falling back to CPU when needed.
 - Exposes text generation over Binder/AIDL.
 - Exposes image-assisted generation over Binder/AIDL using a `ParcelFileDescriptor`.
-- Lets multiple client apps share the same service-owned runtime and model registration.
-- Automatically trusts same-signed clients and lets the user approve independently signed clients.
-- Binds approvals to package name plus SHA-256 signing-certificate fingerprint.
-- Provides a small UI for model selection, client access, diagnostics and direct prompt testing.
+- Lets multiple independently signed client apps share the same service-owned runtime and model registration.
+- Uses an explicit Android permission as the client opt-in and access boundary.
+- Provides a small UI for model selection, diagnostics and direct prompt testing.
 
 ## Architecture
 
 ```text
 Client app
    │
-   │ Binder / AIDL
+   │ Binder / AIDL + permission
    ▼
 Android LLM Service
-   │
-   ├── client authorization
    │
    │ LiteRT-LM
    ▼
@@ -77,8 +74,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 2. Select a `.litertlm` model that is already stored on the phone.
 3. Run diagnostics if you want to verify model access and runtime initialization.
 4. Send a prompt from the built-in test UI.
-5. Open **Clients** to review apps that request access to the Binder service.
-6. Approve independently signed clients that you trust.
+5. Client apps that declare the Binder permission can use the service directly; no manual approval step is required.
 
 The service intentionally does not duplicate the model into its private storage.
 
@@ -87,9 +83,9 @@ The service intentionally does not duplicate the model into its private storage.
 The exported Binder service uses:
 
 ```text
-Package: de.fgna.androidllmservice
-Action:  de.fgna.androidllmservice.BIND
-Permission marker: de.fgna.androidllmservice.permission.BIND_LLM_SERVICE
+Package:    de.fgna.androidllmservice
+Action:     de.fgna.androidllmservice.BIND
+Permission: de.fgna.androidllmservice.permission.BIND_LLM_SERVICE
 ```
 
 The AIDL contract lives under:
@@ -105,30 +101,25 @@ The current interface supports:
 - text generation
 - image-assisted generation
 
-See [`docs/CLIENT_INTEGRATION.md`](docs/CLIENT_INTEGRATION.md) for the binding contract, approval flow and compatibility rules.
+See [`docs/CLIENT_INTEGRATION.md`](docs/CLIENT_INTEGRATION.md) for the binding contract and compatibility rules.
 
-### Client authorization
+### Client access
 
-The service supports both coordinated and independently distributed apps:
+Client apps declare `de.fgna.androidllmservice.permission.BIND_LLM_SERVICE` in their manifest. The permission uses Android's `normal` protection level so independently signed apps can request it. The exported Binder service itself requires that permission, so apps that do not declare it cannot bind.
 
-- apps signed with the same certificate as Android LLM Service are trusted automatically
-- independently signed apps must be explicitly approved under **Clients** in the service UI
-
-Approval is stored against the package name and current signing-certificate fingerprint. A differently signed replacement therefore does not inherit access automatically.
-
-Client apps should still declare `de.fgna.androidllmservice.permission.BIND_LLM_SERVICE` in their manifest. The declaration acts as an explicit opt-in and allows the service UI to discover candidate clients. Authorization itself is enforced by the service for every Binder operation.
+There is no package allowlist, certificate matching or per-client approval UI. Declaring the permission is the explicit opt-in to use the local inference service.
 
 ## API compatibility
 
 The Binder/AIDL contract is treated as a public interface once clients depend on it. Existing methods should not be removed, reordered or have their semantics changed without an explicit compatibility plan. New capabilities should preferably be additive.
 
-Client apps should treat service availability as optional at runtime and show a clear user-facing message when the service is not installed, not authorized, not compatible or has no model registered.
+Client apps should treat service availability as optional at runtime and show a clear user-facing message when the service is not installed, not compatible or has no model registered.
 
 ## Security and privacy
 
 Inference is local in the current baseline. Prompts and supplied images are processed by the on-device runtime; this repository does not add a remote inference fallback.
 
-The Binder endpoint is exported because other apps need to bind to it. Access is restricted at runtime using the calling UID, package identity and signing certificate, with explicit user approval for independently signed clients. See [`SECURITY.md`](SECURITY.md) for the trust boundary and reporting guidance.
+The Binder endpoint is exported because other apps need to bind to it. Access is protected by the custom Android permission required directly on the service component. See [`SECURITY.md`](SECURITY.md) for the trust boundary and reporting guidance.
 
 ## Project status
 
@@ -138,7 +129,7 @@ The on-device Binder service is the completed baseline version:
 - local text inference: complete
 - image-assisted Binder requests: complete
 - shared Binder/AIDL service: complete
-- independently signed client authorization: complete
+- permission-based independently signed client access: complete
 - management/test UI: complete
 
 Possible later extensions include trusted-LAN model servers, explicit external API providers and richer capability reporting.
