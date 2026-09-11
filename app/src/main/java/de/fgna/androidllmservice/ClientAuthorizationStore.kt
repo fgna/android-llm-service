@@ -134,5 +134,5 @@ class ClientAuthorizationStore(private val context: Context) {
     private fun sha256(bytes: ByteArray): String =
         MessageDigest.getInstance("SHA-256")
             .digest(bytes)
-            .joinToString("") { byte -> "%02X".format(byte) }
+            .joinToString("") { byte -> "%02X".format(byte.toInt() and 0xFF) }
 }
