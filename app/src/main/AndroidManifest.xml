@@ -2,6 +2,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
 
+    <!--
+      Client apps keep declaring this permission as an explicit opt-in marker.
+      Binder access itself is authorized at runtime by package + signing certificate so
+      independently signed public clients can be approved by the user.
+    -->
     <permission
         android:name="de.fgna.androidllmservice.permission.BIND_LLM_SERVICE"
         android:protectionLevel="signature" />
@@ -17,8 +22,7 @@
 
         <service
             android:name=".LlmBinderService"
-            android:exported="true"
-            android:permission="de.fgna.androidllmservice.permission.BIND_LLM_SERVICE">
+            android:exported="true">
             <intent-filter>
                 <action android:name="de.fgna.androidllmservice.BIND" />
             </intent-filter>
