@@ -17,6 +17,7 @@ The current baseline is intentionally focused: one registered `.litertlm` model,
 - Automatically trusts same-signed clients and lets the user approve independently signed clients.
 - Binds approvals to package name plus SHA-256 signing-certificate fingerprint.
 - Provides a small UI for model selection, client access, diagnostics and direct prompt testing.
+- Uses German UI copy for German system locales and English for all other locales.
 
 ## Architecture
 
@@ -129,6 +130,12 @@ Client apps should treat service availability as optional at runtime and show a 
 Inference is local in the current baseline. Prompts and supplied images are processed by the on-device runtime; this repository does not add a remote inference fallback.
 
 The Binder endpoint is exported because other apps need to bind to it. Access is restricted at runtime using the calling UID, package identity and signing certificate, with explicit user approval for independently signed clients. See [`SECURITY.md`](SECURITY.md) for the trust boundary and reporting guidance.
+
+## Development and releases
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for contribution guidance, [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) for participation expectations, [`CHANGELOG.md`](CHANGELOG.md) for notable changes, and [`docs/RELEASING.md`](docs/RELEASING.md) for the release process.
+
+Real screenshots belong under [`docs/screenshots/`](docs/screenshots/). They are intentionally kept separate from generated or mock imagery so the README only shows actual app output.
 
 ## Project status
 
