@@ -2,8 +2,6 @@
 
 A small Android service that provides one shared on-device LLM runtime to multiple apps through Binder/AIDL.
 
-[![Android](https://github.com/fgna/android-llm-service/actions/workflows/android.yml/badge.svg)](https://github.com/fgna/android-llm-service/actions/workflows/android.yml)
-
 Android LLM Service keeps local inference behind one stable Android-facing boundary. Client apps can submit text or image-assisted prompts without embedding their own LiteRT-LM runtime or maintaining another multi-gigabyte model copy.
 
 The current baseline is intentionally focused: one registered `.litertlm` model, local inference on the phone, a Binder/AIDL API, diagnostics, client authorization, and a small management UI. LAN and external API providers are future extensions rather than requirements for the baseline service.
