@@ -2,6 +2,7 @@ package de.fgna.androidllmservice
 
 import android.app.Service
 import android.content.Intent
+import android.os.Binder
 import android.os.IBinder
 import android.os.ParcelFileDescriptor
 import android.os.RemoteException
@@ -17,13 +18,21 @@ class LlmBinderService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val modelStore by lazy { ModelStore(this) }
     private val runtime by lazy { LlmRuntimeProvider.get(this) }
+    private val clientAuthorizations by lazy { ClientAuthorizationStore(this) }
 
     private val binder = object : ILlmService.Stub() {
-        override fun isModelReady(): Boolean = modelStore.current() != null
+        override fun isModelReady(): Boolean {
+            enforceAuthorizedCaller()
+            return modelStore.current() != null
+        }
 
-        override fun getActiveModelName(): String = modelStore.current()?.displayName.orEmpty()
+        override fun getActiveModelName(): String {
+            enforceAuthorizedCaller()
+            return modelStore.current()?.displayName.orEmpty()
+        }
 
         override fun generate(prompt: String?, callback: ILlmCallback?) {
+            enforceAuthorizedCaller()
             if (callback == null) return
             val cleanPrompt = prompt?.trim().orEmpty()
             if (cleanPrompt.isBlank()) {
@@ -50,6 +59,13 @@ class LlmBinderService : Service() {
             image: ParcelFileDescriptor?,
             callback: ILlmCallback?,
         ) {
+            try {
+                enforceAuthorizedCaller()
+            } catch (failure: SecurityException) {
+                runCatching { image?.close() }
+                throw failure
+            }
+
             if (callback == null) {
                 image?.close()
                 return
@@ -91,6 +107,15 @@ class LlmBinderService : Service() {
     override fun onDestroy() {
         scope.cancel()
         super.onDestroy()
+    }
+
+    private fun enforceAuthorizedCaller() {
+        val uid = Binder.getCallingUid()
+        if (!clientAuthorizations.isUidAuthorized(uid)) {
+            throw SecurityException(
+                "Client is not authorized. Open Android LLM Service and approve the app under Clients.",
+            )
+        }
     }
 
     private fun safeSuccess(callback: ILlmCallback, result: GenerationResult) {
