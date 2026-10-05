@@ -18,13 +18,6 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
-internal data class GenerationResult(
-    val text: String,
-    val initializationMillis: Long,
-    val generationMillis: Long,
-    val coldStart: Boolean,
-)
-
 internal class LiteRtRuntime(private val context: Context) : AutoCloseable {
     private data class LoadedModel(val uri: Uri, val engine: Engine, val backend: String)
     private val mutex = Mutex()
@@ -69,7 +62,14 @@ internal class LiteRtRuntime(private val context: Context) : AutoCloseable {
                 loaded = current
                 block(current)
             }
-            GenerationResult(response.trim(), initializationMillis, elapsedMillis(generationStarted), coldStart)
+            GenerationResult(
+                text = response.trim(),
+                initializationMillis = initializationMillis,
+                generationMillis = elapsedMillis(generationStarted),
+                coldStart = coldStart,
+                providerId = "on-device",
+                modelName = model.displayName,
+            )
         }
     }
 
