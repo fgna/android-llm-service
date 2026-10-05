@@ -111,10 +111,15 @@ internal class LanInferenceProvider(context: Context) : InferenceProvider {
         }
     }
 
-    private fun currentConfig() = LanProviderConfig(
-        baseUrl = preferences.getString(KEY_BASE_URL, "").orEmpty(),
-        model = preferences.getString(KEY_MODEL, "").orEmpty(),
-    )
+    private fun currentConfig(): LanProviderConfig {
+        // Editor.apply() publishes a complete in-memory update. Reading getAll() once
+        // gives generation and profile calls one matching endpoint/model snapshot.
+        val snapshot = preferences.all
+        return LanProviderConfig(
+            baseUrl = snapshot[KEY_BASE_URL] as? String ?: "",
+            model = snapshot[KEY_MODEL] as? String ?: "",
+        )
+    }
 
     private fun chatCompletionsUrl(baseUrl: String): String = when {
         baseUrl.endsWith("/v1/chat/completions") -> baseUrl
