@@ -2,21 +2,31 @@ package de.fgna.androidllmservice
 
 import android.app.Service
 import android.content.Intent
+import android.os.Binder
 import android.os.IBinder
 import android.os.ParcelFileDescriptor
 import android.os.RemoteException
 import java.io.File
 import java.io.FileInputStream
+import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+
+private data class RequestKey(val callerUid: Int, val requestId: String)
+private data class ActiveRequest(val job: Job, val callback: ILlmCallback)
 
 class LlmBinderService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val modelStore by lazy { ModelStore(this) }
     private val providers by lazy { ProviderRegistry(this, modelStore) }
+    private val requests = ConcurrentHashMap<RequestKey, ActiveRequest>()
 
     private val binder = object : ILlmService.Stub() {
         override fun isModelReady(): Boolean = modelStore.current() != null
@@ -38,10 +48,21 @@ class LlmBinderService : Service() {
             prompt: String?,
             callback: ILlmCallback?,
         ) {
+            generateWithRequest(UUID.randomUUID().toString(), profileId, prompt, callback)
+        }
+
+        override fun generateWithRequest(
+            requestId: String?,
+            profileId: String?,
+            prompt: String?,
+            callback: ILlmCallback?,
+        ) {
             if (callback == null) return
+            val cleanRequestId = requestId?.trim().orEmpty()
+            val requestKey = RequestKey(Binder.getCallingUid(), cleanRequestId)
             val cleanPrompt = prompt?.trim().orEmpty()
-            if (cleanPrompt.isBlank()) {
-                safeError(callback, "INVALID_REQUEST", "Prompt must not be blank.")
+            if (cleanRequestId.isBlank() || cleanPrompt.isBlank()) {
+                safeError(callback, "INVALID_REQUEST", "Request ID and prompt must not be blank.")
                 return
             }
 
@@ -55,14 +76,49 @@ class LlmBinderService : Service() {
                 return
             }
 
-            scope.launch {
-                runCatching { provider.generate(cleanPrompt) }
-                    .onSuccess { result -> safeSuccess(callback, result) }
-                    .onFailure { failure ->
+            lateinit var active: ActiveRequest
+            val job = scope.launch(start = CoroutineStart.LAZY) {
+                try {
+                    val result = provider.generate(cleanPrompt)
+                    if (requests.remove(requestKey, active)) {
+                        safeSuccess(callback, result)
+                    }
+                } catch (_: CancellationException) {
+                    // cancelRequest owns the single terminal cancellation callback.
+                } catch (failure: Throwable) {
+                    if (requests.remove(requestKey, active)) {
                         val error = failure.toProviderError()
                         safeError(callback, error.code, error.message)
                     }
+                } finally {
+                    requests.remove(requestKey, active)
+                }
             }
+            active = ActiveRequest(job, callback)
+            if (requests.putIfAbsent(requestKey, active) != null) {
+                job.cancel()
+                safeError(
+                    callback,
+                    ProviderErrorCodes.REQUEST_ALREADY_ACTIVE,
+                    "Request ID '$cleanRequestId' is already active.",
+                )
+                return
+            }
+            job.start()
+        }
+
+        override fun cancelRequest(requestId: String?): Boolean {
+            val cleanRequestId = requestId?.trim().orEmpty()
+            if (cleanRequestId.isBlank()) return false
+            val requestKey = RequestKey(Binder.getCallingUid(), cleanRequestId)
+            val active = requests.remove(requestKey) ?: return false
+            active.job.cancel(CancellationException("Cancelled by Binder client."))
+            safeError(
+                active.callback,
+                ProviderErrorCodes.REQUEST_CANCELLED,
+                "Request '$cleanRequestId' was cancelled.",
+            )
+            return true
         }
 
         override fun generateWithImage(
@@ -110,6 +166,16 @@ class LlmBinderService : Service() {
     override fun onBind(intent: Intent?): IBinder = binder
 
     override fun onDestroy() {
+        requests.forEach { (requestKey, active) ->
+            if (requests.remove(requestKey, active)) {
+                active.job.cancel(CancellationException("Service destroyed."))
+                safeError(
+                    active.callback,
+                    ProviderErrorCodes.REQUEST_CANCELLED,
+                    "Request '${requestKey.requestId}' was cancelled because the service stopped.",
+                )
+            }
+        }
         scope.cancel()
         super.onDestroy()
     }
