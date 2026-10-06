@@ -2,6 +2,7 @@ package de.fgna.androidllmservice
 
 import android.app.Service
 import android.content.Intent
+import android.os.Binder
 import android.os.IBinder
 import android.os.ParcelFileDescriptor
 import android.os.RemoteException
@@ -18,6 +19,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
+private data class RequestKey(val callerUid: Int, val requestId: String)
 private data class ActiveRequest(val job: Job, val callback: ILlmCallback)
 
 class LlmBinderService : Service() {
@@ -57,6 +59,7 @@ class LlmBinderService : Service() {
         ) {
             if (callback == null) return
             val cleanRequestId = requestId?.trim().orEmpty()
+            val requestKey = RequestKey(Binder.getCallingUid(), cleanRequestId)
             val cleanPrompt = prompt?.trim().orEmpty()
             if (cleanRequestId.isBlank() || cleanPrompt.isBlank()) {
                 safeError(callback, "INVALID_REQUEST", "Request ID and prompt must not be blank.")
@@ -77,22 +80,22 @@ class LlmBinderService : Service() {
             val job = scope.launch(start = CoroutineStart.LAZY) {
                 try {
                     val result = provider.generate(cleanPrompt)
-                    if (requests.remove(cleanRequestId, active)) {
+                    if (requests.remove(requestKey, active)) {
                         safeSuccess(callback, result)
                     }
                 } catch (_: CancellationException) {
                     // cancelRequest owns the single terminal cancellation callback.
                 } catch (failure: Throwable) {
-                    if (requests.remove(cleanRequestId, active)) {
+                    if (requests.remove(requestKey, active)) {
                         val error = failure.toProviderError()
                         safeError(callback, error.code, error.message)
                     }
                 } finally {
-                    requests.remove(cleanRequestId, active)
+                    requests.remove(requestKey, active)
                 }
             }
             active = ActiveRequest(job, callback)
-            if (requests.putIfAbsent(cleanRequestId, active) != null) {
+            if (requests.putIfAbsent(requestKey, active) != null) {
                 job.cancel()
                 safeError(
                     callback,
@@ -107,7 +110,8 @@ class LlmBinderService : Service() {
         override fun cancelRequest(requestId: String?): Boolean {
             val cleanRequestId = requestId?.trim().orEmpty()
             if (cleanRequestId.isBlank()) return false
-            val active = requests.remove(cleanRequestId) ?: return false
+            val requestKey = RequestKey(Binder.getCallingUid(), cleanRequestId)
+            val active = requests.remove(requestKey) ?: return false
             active.job.cancel(CancellationException("Cancelled by Binder client."))
             safeError(
                 active.callback,
@@ -162,13 +166,13 @@ class LlmBinderService : Service() {
     override fun onBind(intent: Intent?): IBinder = binder
 
     override fun onDestroy() {
-        requests.forEach { (requestId, active) ->
-            if (requests.remove(requestId, active)) {
+        requests.forEach { (requestKey, active) ->
+            if (requests.remove(requestKey, active)) {
                 active.job.cancel(CancellationException("Service destroyed."))
                 safeError(
                     active.callback,
                     ProviderErrorCodes.REQUEST_CANCELLED,
-                    "Request '$requestId' was cancelled because the service stopped.",
+                    "Request '${requestKey.requestId}' was cancelled because the service stopped.",
                 )
             }
         }
