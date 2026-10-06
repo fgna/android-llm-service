@@ -35,6 +35,34 @@ internal data class ProviderProfile(
     val supportsImage: Boolean = false,
 )
 
+internal object ProviderErrorCodes {
+    const val UNKNOWN_PROVIDER = "UNKNOWN_PROVIDER"
+    const val PROVIDER_NOT_READY = "PROVIDER_NOT_READY"
+    const val NETWORK_FAILURE = "NETWORK_FAILURE"
+    const val MODEL_CAPABILITY_MISMATCH = "MODEL_CAPABILITY_MISMATCH"
+    const val GENERATION_FAILURE = "GENERATION_FAILURE"
+}
+
+internal data class ProviderError(val code: String, val message: String)
+
+internal class ProviderException(
+    val errorCode: String,
+    message: String,
+    cause: Throwable? = null,
+) : RuntimeException(message, cause)
+
+internal fun Throwable.toProviderError(): ProviderError = when (this) {
+    is ProviderException -> ProviderError(errorCode, message ?: errorCode)
+    is UnsupportedOperationException -> ProviderError(
+        ProviderErrorCodes.MODEL_CAPABILITY_MISMATCH,
+        message ?: "Provider does not support the requested capability.",
+    )
+    else -> ProviderError(
+        ProviderErrorCodes.GENERATION_FAILURE,
+        message ?: this::class.java.simpleName,
+    )
+}
+
 internal interface InferenceProvider {
     val id: String
 
@@ -43,5 +71,8 @@ internal interface InferenceProvider {
     suspend fun generate(prompt: String): GenerationResult
 
     suspend fun generateWithImage(prompt: String, imagePath: String): GenerationResult =
-        throw UnsupportedOperationException("Provider '$id' does not support image input.")
+        throw ProviderException(
+            ProviderErrorCodes.MODEL_CAPABILITY_MISMATCH,
+            "Provider '$id' does not support image input.",
+        )
 }

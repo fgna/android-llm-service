@@ -1,12 +1,30 @@
 package de.fgna.androidllmservice
 
 import android.content.Context
+import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+
+internal fun classifyLanHttpFailure(responseBody: String): String {
+    val message = responseBody.lowercase()
+    val modelOrCapabilityMismatch = listOf(
+        "model not found",
+        "unknown model",
+        "unsupported model",
+        "does not support",
+        "unsupported capability",
+        "capability mismatch",
+    ).any(message::contains)
+    return if (modelOrCapabilityMismatch) {
+        ProviderErrorCodes.MODEL_CAPABILITY_MISMATCH
+    } else {
+        ProviderErrorCodes.GENERATION_FAILURE
+    }
+}
 
 internal class LanInferenceProvider(context: Context) : InferenceProvider {
     override val id: String = ProviderIds.LAN
@@ -33,8 +51,14 @@ internal class LanInferenceProvider(context: Context) : InferenceProvider {
     }
 
     override suspend fun generate(prompt: String): GenerationResult = withContext(Dispatchers.IO) {
-        val config = currentConfig()
-        check(config.isValid) { "LAN provider is not configured with a valid http(s) base URL and model." }
+        try {
+            val config = currentConfig()
+        if (!config.isValid) {
+            throw ProviderException(
+                ProviderErrorCodes.PROVIDER_NOT_READY,
+                "LAN provider is not configured with a valid http(s) base URL and model.",
+            )
+        }
         val resolvedModel = resolveModel(config)
 
         val request = JSONObject()
@@ -62,8 +86,11 @@ internal class LanInferenceProvider(context: Context) : InferenceProvider {
                 ?.bufferedReader(Charsets.UTF_8)
                 ?.use { it.readText() }
                 .orEmpty()
-            check(status in 200..299) {
-                "LAN provider returned HTTP $status${responseBody.takeIf { it.isNotBlank() }?.let { ": $it" }.orEmpty()}"
+            if (status !in 200..299) {
+                throw ProviderException(
+                    classifyLanHttpFailure(responseBody),
+                    "LAN provider returned HTTP $status${responseBody.takeIf { it.isNotBlank() }?.let { ": $it" }.orEmpty()}",
+                )
             }
 
             val text = JSONObject(responseBody)
@@ -81,8 +108,15 @@ internal class LanInferenceProvider(context: Context) : InferenceProvider {
                 providerId = id,
                 modelName = resolvedModel,
             )
-        } finally {
-            connection.disconnect()
+            } finally {
+                connection.disconnect()
+            }
+        } catch (failure: IOException) {
+            throw ProviderException(
+                ProviderErrorCodes.NETWORK_FAILURE,
+                failure.message ?: "LAN provider network request failed.",
+                failure,
+            )
         }
     }
 
@@ -101,10 +135,20 @@ internal class LanInferenceProvider(context: Context) : InferenceProvider {
                 ?.bufferedReader(Charsets.UTF_8)
                 ?.use { it.readText() }
                 .orEmpty()
-            check(status in 200..299) { "LAN model discovery returned HTTP $status" }
+            if (status !in 200..299) {
+                throw ProviderException(
+                    ProviderErrorCodes.GENERATION_FAILURE,
+                    "LAN model discovery returned HTTP $status",
+                )
+            }
             val models = JSONObject(responseBody).optJSONArray("data")
             val model = models?.optJSONObject(0)?.optString("id").orEmpty().trim()
-            check(model.isNotBlank()) { "LAN model discovery returned no models." }
+            if (model.isBlank()) {
+                throw ProviderException(
+                    ProviderErrorCodes.MODEL_CAPABILITY_MISMATCH,
+                    "LAN model discovery returned no models.",
+                )
+            }
             return model
         } finally {
             connection.disconnect()
