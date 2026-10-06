@@ -41,6 +41,8 @@ internal object ProviderErrorCodes {
     const val NETWORK_FAILURE = "NETWORK_FAILURE"
     const val MODEL_CAPABILITY_MISMATCH = "MODEL_CAPABILITY_MISMATCH"
     const val GENERATION_FAILURE = "GENERATION_FAILURE"
+    const val REQUEST_CANCELLED = "REQUEST_CANCELLED"
+    const val REQUEST_ALREADY_ACTIVE = "REQUEST_ALREADY_ACTIVE"
 }
 
 internal data class ProviderError(val code: String, val message: String)
