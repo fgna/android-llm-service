@@ -16,12 +16,19 @@ class ProviderRegistryContractTest {
     @Test
     fun providerFailuresExposeStableErrorCodes() {
         assertEquals(
-            ProviderErrorCodes.NETWORK_FAILURE,
-            IOException("offline").toProviderError().code,
+            ProviderErrorCodes.GENERATION_FAILURE,
+            IOException("local file failure").toProviderError().code,
         )
         assertEquals(
             ProviderErrorCodes.MODEL_CAPABILITY_MISMATCH,
             UnsupportedOperationException("text only").toProviderError().code,
+        )
+        assertEquals(
+            ProviderErrorCodes.NETWORK_FAILURE,
+            ProviderException(
+                ProviderErrorCodes.NETWORK_FAILURE,
+                "LAN offline",
+            ).toProviderError().code,
         )
         assertEquals(
             ProviderErrorCodes.MODEL_CAPABILITY_MISMATCH,
@@ -33,6 +40,22 @@ class ProviderRegistryContractTest {
         assertEquals(
             ProviderErrorCodes.GENERATION_FAILURE,
             IllegalStateException("bad response").toProviderError().code,
+        )
+    }
+
+    @Test
+    fun lanHttpFailureRequiresModelOrCapabilityEvidence() {
+        assertEquals(
+            ProviderErrorCodes.GENERATION_FAILURE,
+            classifyLanHttpFailure("""{"error":"route not found"}"""),
+        )
+        assertEquals(
+            ProviderErrorCodes.MODEL_CAPABILITY_MISMATCH,
+            classifyLanHttpFailure("""{"error":"model not found"}"""),
+        )
+        assertEquals(
+            ProviderErrorCodes.MODEL_CAPABILITY_MISMATCH,
+            classifyLanHttpFailure("""{"error":"model does not support images"}"""),
         )
     }
 
