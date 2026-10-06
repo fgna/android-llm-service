@@ -14,6 +14,12 @@ class ProviderRegistryContractTest {
     }
 
     @Test
+    fun requestLifecycleErrorCodesAreStable() {
+        assertEquals("REQUEST_CANCELLED", ProviderErrorCodes.REQUEST_CANCELLED)
+        assertEquals("REQUEST_ALREADY_ACTIVE", ProviderErrorCodes.REQUEST_ALREADY_ACTIVE)
+    }
+
+    @Test
     fun providerFailuresExposeStableErrorCodes() {
         assertEquals(
             ProviderErrorCodes.GENERATION_FAILURE,
