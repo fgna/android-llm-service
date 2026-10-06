@@ -18,11 +18,13 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
+private data class ActiveRequest(val job: Job, val callback: ILlmCallback)
+
 class LlmBinderService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val modelStore by lazy { ModelStore(this) }
     private val providers by lazy { ProviderRegistry(this, modelStore) }
-    private val requests = ConcurrentHashMap<String, Job>()
+    private val requests = ConcurrentHashMap<String, ActiveRequest>()
 
     private val binder = object : ILlmService.Stub() {
         override fun isModelReady(): Boolean = modelStore.current() != null
@@ -71,23 +73,26 @@ class LlmBinderService : Service() {
                 return
             }
 
+            lateinit var active: ActiveRequest
             val job = scope.launch(start = CoroutineStart.LAZY) {
                 try {
-                    safeSuccess(callback, provider.generate(cleanPrompt))
-                } catch (cancelled: CancellationException) {
-                    safeError(
-                        callback,
-                        ProviderErrorCodes.REQUEST_CANCELLED,
-                        "Request '$cleanRequestId' was cancelled.",
-                    )
+                    val result = provider.generate(cleanPrompt)
+                    if (requests.remove(cleanRequestId, active)) {
+                        safeSuccess(callback, result)
+                    }
+                } catch (_: CancellationException) {
+                    // cancelRequest owns the single terminal cancellation callback.
                 } catch (failure: Throwable) {
-                    val error = failure.toProviderError()
-                    safeError(callback, error.code, error.message)
+                    if (requests.remove(cleanRequestId, active)) {
+                        val error = failure.toProviderError()
+                        safeError(callback, error.code, error.message)
+                    }
                 } finally {
-                    requests.remove(cleanRequestId)
+                    requests.remove(cleanRequestId, active)
                 }
             }
-            if (requests.putIfAbsent(cleanRequestId, job) != null) {
+            active = ActiveRequest(job, callback)
+            if (requests.putIfAbsent(cleanRequestId, active) != null) {
                 job.cancel()
                 safeError(
                     callback,
@@ -102,8 +107,13 @@ class LlmBinderService : Service() {
         override fun cancelRequest(requestId: String?): Boolean {
             val cleanRequestId = requestId?.trim().orEmpty()
             if (cleanRequestId.isBlank()) return false
-            val job = requests.remove(cleanRequestId) ?: return false
-            job.cancel(CancellationException("Cancelled by Binder client."))
+            val active = requests.remove(cleanRequestId) ?: return false
+            active.job.cancel(CancellationException("Cancelled by Binder client."))
+            safeError(
+                active.callback,
+                ProviderErrorCodes.REQUEST_CANCELLED,
+                "Request '$cleanRequestId' was cancelled.",
+            )
             return true
         }
 
@@ -152,8 +162,16 @@ class LlmBinderService : Service() {
     override fun onBind(intent: Intent?): IBinder = binder
 
     override fun onDestroy() {
-        requests.values.forEach { it.cancel(CancellationException("Service destroyed.")) }
-        requests.clear()
+        requests.forEach { (requestId, active) ->
+            if (requests.remove(requestId, active)) {
+                active.job.cancel(CancellationException("Service destroyed."))
+                safeError(
+                    active.callback,
+                    ProviderErrorCodes.REQUEST_CANCELLED,
+                    "Request '$requestId' was cancelled because the service stopped.",
+                )
+            }
+        }
         scope.cancel()
         super.onDestroy()
     }
