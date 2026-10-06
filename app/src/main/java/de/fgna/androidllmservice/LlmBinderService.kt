@@ -47,11 +47,11 @@ class LlmBinderService : Service() {
 
             val provider = runCatching { providers.provider(profileId.orEmpty()) }
                 .getOrElse { failure ->
-                    safeError(callback, "UNKNOWN_PROVIDER", failure.message ?: "Unknown provider profile.")
+                    safeError(callback, ProviderErrorCodes.UNKNOWN_PROVIDER, failure.message ?: "Unknown provider profile.")
                     return
                 }
             if (!provider.profile().ready) {
-                safeError(callback, "PROVIDER_NOT_READY", "Provider '${provider.id}' is not configured or ready.")
+                safeError(callback, ProviderErrorCodes.PROVIDER_NOT_READY, "Provider '${provider.id}' is not configured or ready.")
                 return
             }
 
@@ -59,7 +59,8 @@ class LlmBinderService : Service() {
                 runCatching { provider.generate(cleanPrompt) }
                     .onSuccess { result -> safeSuccess(callback, result) }
                     .onFailure { failure ->
-                        safeError(callback, "INFERENCE_FAILED", failure.message ?: failure::class.java.simpleName)
+                        val error = failure.toProviderError()
+                        safeError(callback, error.code, error.message)
                     }
             }
         }
@@ -82,7 +83,7 @@ class LlmBinderService : Service() {
             val provider = providers.provider("on-device")
             if (!provider.profile().ready) {
                 image.close()
-                safeError(callback, "PROVIDER_NOT_READY", "On-device provider is not ready.")
+                safeError(callback, ProviderErrorCodes.PROVIDER_NOT_READY, "On-device provider is not ready.")
                 return
             }
 
@@ -96,7 +97,8 @@ class LlmBinderService : Service() {
                     val result = provider.generateWithImage(cleanPrompt, tempImage.absolutePath)
                     safeSuccess(callback, result)
                 } catch (failure: Throwable) {
-                    safeError(callback, "INFERENCE_FAILED", failure.message ?: failure::class.java.simpleName)
+                    val error = failure.toProviderError()
+                    safeError(callback, error.code, error.message)
                 } finally {
                     runCatching { image.close() }
                     tempImage.delete()
