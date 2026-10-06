@@ -12,6 +12,7 @@ import com.google.ai.edge.litertlm.MessageCallback
 import java.io.File
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
@@ -56,7 +57,7 @@ internal class LiteRtRuntime(private val context: Context) : AutoCloseable {
             val response = try {
                 block(current)
             } catch (gpuFailure: Throwable) {
-                if (current.backend != "GPU") throw gpuFailure
+                if (!shouldFallbackToCpu(gpuFailure) || current.backend != "GPU") throw gpuFailure
                 closeLoaded()
                 current = loadBackend(model, Backend.CPU(), "CPU")
                 loaded = current
@@ -137,5 +138,7 @@ internal class LiteRtRuntime(private val context: Context) : AutoCloseable {
 
     override fun close() { closeLoaded() }
 }
+
+internal fun shouldFallbackToCpu(failure: Throwable): Boolean = failure !is CancellationException
 
 private fun elapsedMillis(startedAtNanos: Long): Long = (System.nanoTime() - startedAtNanos) / 1_000_000
