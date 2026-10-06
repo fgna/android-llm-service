@@ -12,4 +12,6 @@ interface ILlmService {
     String getProviderProfilesJson();
     void configureLanProvider(String baseUrl, String model);
     void generateWithProfile(String profileId, String prompt, ILlmCallback callback);
+    void generateWithRequest(String requestId, String profileId, String prompt, ILlmCallback callback);
+    boolean cancelRequest(String requestId);
 }
