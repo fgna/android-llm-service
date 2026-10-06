@@ -1,7 +1,5 @@
 package de.fgna.androidllmservice
 
-import java.io.IOException
-
 internal object ProviderIds {
     const val ON_DEVICE = "on-device"
     const val LAN = "lan"
@@ -55,10 +53,6 @@ internal class ProviderException(
 
 internal fun Throwable.toProviderError(): ProviderError = when (this) {
     is ProviderException -> ProviderError(errorCode, message ?: errorCode)
-    is IOException -> ProviderError(
-        ProviderErrorCodes.NETWORK_FAILURE,
-        message ?: "Provider network request failed.",
-    )
     is UnsupportedOperationException -> ProviderError(
         ProviderErrorCodes.MODEL_CAPABILITY_MISMATCH,
         message ?: "Provider does not support the requested capability.",
