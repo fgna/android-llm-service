@@ -1,12 +1,30 @@
 package de.fgna.androidllmservice
 
 import android.content.Context
+import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+
+internal fun classifyLanHttpFailure(responseBody: String): String {
+    val message = responseBody.lowercase()
+    val modelOrCapabilityMismatch = listOf(
+        "model not found",
+        "unknown model",
+        "unsupported model",
+        "does not support",
+        "unsupported capability",
+        "capability mismatch",
+    ).any(message::contains)
+    return if (modelOrCapabilityMismatch) {
+        ProviderErrorCodes.MODEL_CAPABILITY_MISMATCH
+    } else {
+        ProviderErrorCodes.GENERATION_FAILURE
+    }
+}
 
 internal class LanInferenceProvider(context: Context) : InferenceProvider {
     override val id: String = ProviderIds.LAN
@@ -33,7 +51,8 @@ internal class LanInferenceProvider(context: Context) : InferenceProvider {
     }
 
     override suspend fun generate(prompt: String): GenerationResult = withContext(Dispatchers.IO) {
-        val config = currentConfig()
+        try {
+            val config = currentConfig()
         if (!config.isValid) {
             throw ProviderException(
                 ProviderErrorCodes.PROVIDER_NOT_READY,
@@ -68,13 +87,8 @@ internal class LanInferenceProvider(context: Context) : InferenceProvider {
                 ?.use { it.readText() }
                 .orEmpty()
             if (status !in 200..299) {
-                val code = if (status == 400 || status == 404 || status == 422) {
-                    ProviderErrorCodes.MODEL_CAPABILITY_MISMATCH
-                } else {
-                    ProviderErrorCodes.GENERATION_FAILURE
-                }
                 throw ProviderException(
-                    code,
+                    classifyLanHttpFailure(responseBody),
                     "LAN provider returned HTTP $status${responseBody.takeIf { it.isNotBlank() }?.let { ": $it" }.orEmpty()}",
                 )
             }
@@ -94,8 +108,15 @@ internal class LanInferenceProvider(context: Context) : InferenceProvider {
                 providerId = id,
                 modelName = resolvedModel,
             )
-        } finally {
-            connection.disconnect()
+            } finally {
+                connection.disconnect()
+            }
+        } catch (failure: IOException) {
+            throw ProviderException(
+                ProviderErrorCodes.NETWORK_FAILURE,
+                failure.message ?: "LAN provider network request failed.",
+                failure,
+            )
         }
     }
 
