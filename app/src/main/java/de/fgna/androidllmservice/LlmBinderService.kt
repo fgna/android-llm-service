@@ -7,8 +7,13 @@ import android.os.ParcelFileDescriptor
 import android.os.RemoteException
 import java.io.File
 import java.io.FileInputStream
+import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
@@ -17,6 +22,7 @@ class LlmBinderService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val modelStore by lazy { ModelStore(this) }
     private val providers by lazy { ProviderRegistry(this, modelStore) }
+    private val requests = ConcurrentHashMap<String, Job>()
 
     private val binder = object : ILlmService.Stub() {
         override fun isModelReady(): Boolean = modelStore.current() != null
@@ -38,10 +44,20 @@ class LlmBinderService : Service() {
             prompt: String?,
             callback: ILlmCallback?,
         ) {
+            generateWithRequest(UUID.randomUUID().toString(), profileId, prompt, callback)
+        }
+
+        override fun generateWithRequest(
+            requestId: String?,
+            profileId: String?,
+            prompt: String?,
+            callback: ILlmCallback?,
+        ) {
             if (callback == null) return
+            val cleanRequestId = requestId?.trim().orEmpty()
             val cleanPrompt = prompt?.trim().orEmpty()
-            if (cleanPrompt.isBlank()) {
-                safeError(callback, "INVALID_REQUEST", "Prompt must not be blank.")
+            if (cleanRequestId.isBlank() || cleanPrompt.isBlank()) {
+                safeError(callback, "INVALID_REQUEST", "Request ID and prompt must not be blank.")
                 return
             }
 
@@ -55,14 +71,40 @@ class LlmBinderService : Service() {
                 return
             }
 
-            scope.launch {
-                runCatching { provider.generate(cleanPrompt) }
-                    .onSuccess { result -> safeSuccess(callback, result) }
-                    .onFailure { failure ->
-                        val error = failure.toProviderError()
-                        safeError(callback, error.code, error.message)
-                    }
+            val job = scope.launch(start = CoroutineStart.LAZY) {
+                try {
+                    safeSuccess(callback, provider.generate(cleanPrompt))
+                } catch (cancelled: CancellationException) {
+                    safeError(
+                        callback,
+                        ProviderErrorCodes.REQUEST_CANCELLED,
+                        "Request '$cleanRequestId' was cancelled.",
+                    )
+                } catch (failure: Throwable) {
+                    val error = failure.toProviderError()
+                    safeError(callback, error.code, error.message)
+                } finally {
+                    requests.remove(cleanRequestId)
+                }
             }
+            if (requests.putIfAbsent(cleanRequestId, job) != null) {
+                job.cancel()
+                safeError(
+                    callback,
+                    ProviderErrorCodes.REQUEST_ALREADY_ACTIVE,
+                    "Request ID '$cleanRequestId' is already active.",
+                )
+                return
+            }
+            job.start()
+        }
+
+        override fun cancelRequest(requestId: String?): Boolean {
+            val cleanRequestId = requestId?.trim().orEmpty()
+            if (cleanRequestId.isBlank()) return false
+            val job = requests.remove(cleanRequestId) ?: return false
+            job.cancel(CancellationException("Cancelled by Binder client."))
+            return true
         }
 
         override fun generateWithImage(
@@ -110,6 +152,8 @@ class LlmBinderService : Service() {
     override fun onBind(intent: Intent?): IBinder = binder
 
     override fun onDestroy() {
+        requests.values.forEach { it.cancel(CancellationException("Service destroyed.")) }
+        requests.clear()
         scope.cancel()
         super.onDestroy()
     }
