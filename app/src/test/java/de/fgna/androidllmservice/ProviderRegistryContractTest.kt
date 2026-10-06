@@ -1,5 +1,6 @@
 package de.fgna.androidllmservice
 
+import java.io.IOException
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -10,6 +11,29 @@ class ProviderRegistryContractTest {
     fun providerProfileIdsAreStable() {
         assertEquals("on-device", ProviderIds.ON_DEVICE)
         assertEquals("lan", ProviderIds.LAN)
+    }
+
+    @Test
+    fun providerFailuresExposeStableErrorCodes() {
+        assertEquals(
+            ProviderErrorCodes.NETWORK_FAILURE,
+            IOException("offline").toProviderError().code,
+        )
+        assertEquals(
+            ProviderErrorCodes.MODEL_CAPABILITY_MISMATCH,
+            UnsupportedOperationException("text only").toProviderError().code,
+        )
+        assertEquals(
+            ProviderErrorCodes.MODEL_CAPABILITY_MISMATCH,
+            ProviderException(
+                ProviderErrorCodes.MODEL_CAPABILITY_MISMATCH,
+                "unknown model",
+            ).toProviderError().code,
+        )
+        assertEquals(
+            ProviderErrorCodes.GENERATION_FAILURE,
+            IllegalStateException("bad response").toProviderError().code,
+        )
     }
 
     @Test
