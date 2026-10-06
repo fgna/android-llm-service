@@ -26,7 +26,7 @@ class LlmBinderService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val modelStore by lazy { ModelStore(this) }
     private val providers by lazy { ProviderRegistry(this, modelStore) }
-    private val requests = ConcurrentHashMap<String, ActiveRequest>()
+    private val requests = ConcurrentHashMap<RequestKey, ActiveRequest>()
 
     private val binder = object : ILlmService.Stub() {
         override fun isModelReady(): Boolean = modelStore.current() != null
