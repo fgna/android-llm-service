@@ -4,7 +4,10 @@ import android.content.Context
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -23,6 +26,30 @@ internal fun classifyLanHttpFailure(responseBody: String): String {
         ProviderErrorCodes.MODEL_CAPABILITY_MISMATCH
     } else {
         ProviderErrorCodes.GENERATION_FAILURE
+    }
+}
+
+internal data class LanHttpResponse(val status: Int, val body: String)
+
+internal suspend fun readLanResponse(
+    connection: HttpURLConnection,
+    requestBody: String? = null,
+): LanHttpResponse = suspendCancellableCoroutine { continuation ->
+    continuation.invokeOnCancellation { connection.disconnect() }
+    try {
+        if (requestBody != null) {
+            connection.outputStream.bufferedWriter(Charsets.UTF_8).use { it.write(requestBody) }
+        }
+        val status = connection.responseCode
+        val body = (if (status in 200..299) connection.inputStream else connection.errorStream)
+            ?.bufferedReader(Charsets.UTF_8)
+            ?.use { it.readText() }
+            .orEmpty()
+        if (continuation.isActive) continuation.resume(LanHttpResponse(status, body))
+    } catch (failure: Throwable) {
+        if (continuation.isActive) continuation.resumeWithException(failure)
+    } finally {
+        connection.disconnect()
     }
 }
 
@@ -79,14 +106,8 @@ internal class LanInferenceProvider(context: Context) : InferenceProvider {
             setRequestProperty("Accept", "application/json")
         }
 
-        try {
-            connection.outputStream.bufferedWriter(Charsets.UTF_8).use { it.write(request.toString()) }
-            val status = connection.responseCode
-            val responseBody = (if (status in 200..299) connection.inputStream else connection.errorStream)
-                ?.bufferedReader(Charsets.UTF_8)
-                ?.use { it.readText() }
-                .orEmpty()
-            if (status !in 200..299) {
+        val (status, responseBody) = readLanResponse(connection, request.toString())
+        if (status !in 200..299) {
                 throw ProviderException(
                     classifyLanHttpFailure(responseBody),
                     "LAN provider returned HTTP $status${responseBody.takeIf { it.isNotBlank() }?.let { ": $it" }.orEmpty()}",
@@ -100,17 +121,14 @@ internal class LanInferenceProvider(context: Context) : InferenceProvider {
                 .getString("content")
                 .trim()
 
-            GenerationResult(
-                text = text,
-                initializationMillis = 0L,
-                generationMillis = elapsedMillis(started),
-                coldStart = false,
-                providerId = id,
-                modelName = resolvedModel,
-            )
-            } finally {
-                connection.disconnect()
-            }
+        GenerationResult(
+            text = text,
+            initializationMillis = 0L,
+            generationMillis = elapsedMillis(started),
+            coldStart = false,
+            providerId = id,
+            modelName = resolvedModel,
+        )
         } catch (failure: IOException) {
             throw ProviderException(
                 ProviderErrorCodes.NETWORK_FAILURE,
@@ -120,7 +138,7 @@ internal class LanInferenceProvider(context: Context) : InferenceProvider {
         }
     }
 
-    private fun resolveModel(config: LanProviderConfig): String {
+    private suspend fun resolveModel(config: LanProviderConfig): String {
         if (!config.normalizedModel.equals(AUTO_MODEL, ignoreCase = true)) return config.normalizedModel
 
         val connection = (URL(modelsUrl(config.normalizedBaseUrl)).openConnection() as HttpURLConnection).apply {
@@ -129,13 +147,8 @@ internal class LanInferenceProvider(context: Context) : InferenceProvider {
             readTimeout = 5_000
             setRequestProperty("Accept", "application/json")
         }
-        try {
-            val status = connection.responseCode
-            val responseBody = (if (status in 200..299) connection.inputStream else connection.errorStream)
-                ?.bufferedReader(Charsets.UTF_8)
-                ?.use { it.readText() }
-                .orEmpty()
-            if (status !in 200..299) {
+        val (status, responseBody) = readLanResponse(connection)
+        if (status !in 200..299) {
                 throw ProviderException(
                     ProviderErrorCodes.GENERATION_FAILURE,
                     "LAN model discovery returned HTTP $status",
@@ -149,10 +162,7 @@ internal class LanInferenceProvider(context: Context) : InferenceProvider {
                     "LAN model discovery returned no models.",
                 )
             }
-            return model
-        } finally {
-            connection.disconnect()
-        }
+        return model
     }
 
     private fun currentConfig(): LanProviderConfig {
