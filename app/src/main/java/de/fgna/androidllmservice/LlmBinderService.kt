@@ -154,7 +154,7 @@ class LlmBinderService : Service() {
                 active.job.cancel(CancellationException("Service destroyed."))
                 active.callbacks.onError(
                     ProviderErrorCodes.REQUEST_CANCELLED,
-                    "Request '\${requestKey.requestId}' was cancelled because the service stopped.",
+                    "Request '${requestKey.requestId}' was cancelled because the service stopped.",
                 )
             }
         }
@@ -188,7 +188,7 @@ class LlmBinderService : Service() {
         if (!provider.profile().ready) {
             callbacks.onError(
                 ProviderErrorCodes.PROVIDER_NOT_READY,
-                "Provider '\${provider.id}' is not configured or ready.",
+                "Provider '${provider.id}' is not configured or ready.",
             )
             return
         }
