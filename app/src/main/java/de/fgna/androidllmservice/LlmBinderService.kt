@@ -20,7 +20,11 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
 private data class RequestKey(val callerUid: Int, val requestId: String)
-private data class ActiveRequest(val job: Job, val callback: ILlmCallback)
+private data class RequestCallbacks(
+    val onSuccess: (GenerationResult) -> Unit,
+    val onError: (String, String) -> Unit,
+)
+private data class ActiveRequest(val job: Job, val callbacks: RequestCallbacks)
 
 class LlmBinderService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -30,9 +34,7 @@ class LlmBinderService : Service() {
 
     private val binder = object : ILlmService.Stub() {
         override fun isModelReady(): Boolean = modelStore.current() != null
-
         override fun getActiveModelName(): String = modelStore.current()?.displayName.orEmpty()
-
         override fun getProviderProfilesJson(): String = providers.profilesJson()
 
         override fun configureLanProvider(baseUrl: String?, model: String?) {
@@ -58,53 +60,35 @@ class LlmBinderService : Service() {
             callback: ILlmCallback?,
         ) {
             if (callback == null) return
-            val cleanRequestId = requestId?.trim().orEmpty()
-            val requestKey = RequestKey(Binder.getCallingUid(), cleanRequestId)
-            val cleanPrompt = prompt?.trim().orEmpty()
-            if (cleanRequestId.isBlank() || cleanPrompt.isBlank()) {
-                safeError(callback, "INVALID_REQUEST", "Request ID and prompt must not be blank.")
-                return
-            }
+            startRequest(
+                callerUid = Binder.getCallingUid(),
+                requestId = requestId,
+                profileId = profileId,
+                prompt = prompt,
+                callbacks = RequestCallbacks(
+                    onSuccess = { result -> safeSuccess(callback, result) },
+                    onError = { code, message -> safeError(callback, code, message) },
+                ),
+            )
+        }
 
-            val provider = runCatching { providers.provider(profileId.orEmpty()) }
-                .getOrElse { failure ->
-                    safeError(callback, ProviderErrorCodes.UNKNOWN_PROVIDER, failure.message ?: "Unknown provider profile.")
-                    return
-                }
-            if (!provider.profile().ready) {
-                safeError(callback, ProviderErrorCodes.PROVIDER_NOT_READY, "Provider '${provider.id}' is not configured or ready.")
-                return
-            }
-
-            lateinit var active: ActiveRequest
-            val job = scope.launch(start = CoroutineStart.LAZY) {
-                try {
-                    val result = provider.generate(cleanPrompt)
-                    if (requests.remove(requestKey, active)) {
-                        safeSuccess(callback, result)
-                    }
-                } catch (_: CancellationException) {
-                    // cancelRequest owns the single terminal cancellation callback.
-                } catch (failure: Throwable) {
-                    if (requests.remove(requestKey, active)) {
-                        val error = failure.toProviderError()
-                        safeError(callback, error.code, error.message)
-                    }
-                } finally {
-                    requests.remove(requestKey, active)
-                }
-            }
-            active = ActiveRequest(job, callback)
-            if (requests.putIfAbsent(requestKey, active) != null) {
-                job.cancel()
-                safeError(
-                    callback,
-                    ProviderErrorCodes.REQUEST_ALREADY_ACTIVE,
-                    "Request ID '$cleanRequestId' is already active.",
-                )
-                return
-            }
-            job.start()
+        override fun generateWithRequestMetadata(
+            requestId: String?,
+            profileId: String?,
+            prompt: String?,
+            callback: ILlmResultCallback?,
+        ) {
+            if (callback == null) return
+            startRequest(
+                callerUid = Binder.getCallingUid(),
+                requestId = requestId,
+                profileId = profileId,
+                prompt = prompt,
+                callbacks = RequestCallbacks(
+                    onSuccess = { result -> safeMetadataSuccess(callback, result) },
+                    onError = { code, message -> safeError(callback, code, message) },
+                ),
+            )
         }
 
         override fun cancelRequest(requestId: String?): Boolean {
@@ -113,8 +97,7 @@ class LlmBinderService : Service() {
             val requestKey = RequestKey(Binder.getCallingUid(), cleanRequestId)
             val active = requests.remove(requestKey) ?: return false
             active.job.cancel(CancellationException("Cancelled by Binder client."))
-            safeError(
-                active.callback,
+            active.callbacks.onError(
                 ProviderErrorCodes.REQUEST_CANCELLED,
                 "Request '$cleanRequestId' was cancelled.",
             )
@@ -169,15 +152,75 @@ class LlmBinderService : Service() {
         requests.forEach { (requestKey, active) ->
             if (requests.remove(requestKey, active)) {
                 active.job.cancel(CancellationException("Service destroyed."))
-                safeError(
-                    active.callback,
+                active.callbacks.onError(
                     ProviderErrorCodes.REQUEST_CANCELLED,
-                    "Request '${requestKey.requestId}' was cancelled because the service stopped.",
+                    "Request '\${requestKey.requestId}' was cancelled because the service stopped.",
                 )
             }
         }
         scope.cancel()
         super.onDestroy()
+    }
+
+    private fun startRequest(
+        callerUid: Int,
+        requestId: String?,
+        profileId: String?,
+        prompt: String?,
+        callbacks: RequestCallbacks,
+    ) {
+        val cleanRequestId = requestId?.trim().orEmpty()
+        val requestKey = RequestKey(callerUid, cleanRequestId)
+        val cleanPrompt = prompt?.trim().orEmpty()
+        if (cleanRequestId.isBlank() || cleanPrompt.isBlank()) {
+            callbacks.onError("INVALID_REQUEST", "Request ID and prompt must not be blank.")
+            return
+        }
+
+        val provider = runCatching { providers.provider(profileId.orEmpty()) }
+            .getOrElse { failure ->
+                callbacks.onError(
+                    ProviderErrorCodes.UNKNOWN_PROVIDER,
+                    failure.message ?: "Unknown provider profile.",
+                )
+                return
+            }
+        if (!provider.profile().ready) {
+            callbacks.onError(
+                ProviderErrorCodes.PROVIDER_NOT_READY,
+                "Provider '\${provider.id}' is not configured or ready.",
+            )
+            return
+        }
+
+        lateinit var active: ActiveRequest
+        val job = scope.launch(start = CoroutineStart.LAZY) {
+            try {
+                val result = provider.generate(cleanPrompt)
+                if (requests.remove(requestKey, active)) {
+                    callbacks.onSuccess(result)
+                }
+            } catch (_: CancellationException) {
+                // cancelRequest owns the single terminal cancellation callback.
+            } catch (failure: Throwable) {
+                if (requests.remove(requestKey, active)) {
+                    val error = failure.toProviderError()
+                    callbacks.onError(error.code, error.message)
+                }
+            } finally {
+                requests.remove(requestKey, active)
+            }
+        }
+        active = ActiveRequest(job, callbacks)
+        if (requests.putIfAbsent(requestKey, active) != null) {
+            job.cancel()
+            callbacks.onError(
+                ProviderErrorCodes.REQUEST_ALREADY_ACTIVE,
+                "Request ID '$cleanRequestId' is already active.",
+            )
+            return
+        }
+        job.start()
     }
 
     private fun safeSuccess(callback: ILlmCallback, result: GenerationResult) {
@@ -193,7 +236,30 @@ class LlmBinderService : Service() {
         }
     }
 
+    private fun safeMetadataSuccess(callback: ILlmResultCallback, result: GenerationResult) {
+        try {
+            callback.onSuccess(
+                result.text,
+                result.initializationMillis,
+                result.generationMillis,
+                result.coldStart,
+                result.providerId,
+                result.modelName,
+            )
+        } catch (_: RemoteException) {
+            // Client disconnected. Provider state remains valid for future clients.
+        }
+    }
+
     private fun safeError(callback: ILlmCallback, code: String, message: String) {
+        try {
+            callback.onError(code, message)
+        } catch (_: RemoteException) {
+            // Client disconnected before receiving the error.
+        }
+    }
+
+    private fun safeError(callback: ILlmResultCallback, code: String, message: String) {
         try {
             callback.onError(code, message)
         } catch (_: RemoteException) {
