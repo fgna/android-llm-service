@@ -2,6 +2,7 @@ package de.fgna.androidllmservice;
 
 import android.os.ParcelFileDescriptor;
 import de.fgna.androidllmservice.ILlmCallback;
+import de.fgna.androidllmservice.ILlmResultCallback;
 
 interface ILlmService {
     boolean isModelReady();
@@ -14,4 +15,11 @@ interface ILlmService {
     void generateWithProfile(String profileId, String prompt, ILlmCallback callback);
     void generateWithRequest(String requestId, String profileId, String prompt, ILlmCallback callback);
     boolean cancelRequest(String requestId);
+
+    void generateWithRequestMetadata(
+        String requestId,
+        String profileId,
+        String prompt,
+        ILlmResultCallback callback
+    );
 }
