@@ -7,7 +7,7 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 android {
     namespace = "de.fgna.androidllmservice"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "de.fgna.androidllmservice"
@@ -49,7 +49,7 @@ kotlin {
 }
 
 dependencies {
-    val composeBom = platform("androidx.compose:compose-bom:2025.05.00")
+    val composeBom = platform("androidx.compose:compose-bom:2026.09.00")
     implementation(composeBom)
     implementation("androidx.activity:activity-compose:1.10.1")
     implementation("androidx.compose.material3:material3")
