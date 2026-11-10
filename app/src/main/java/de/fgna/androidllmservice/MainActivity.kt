@@ -114,6 +114,7 @@ private fun AppScreen(
     var diagnostic by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var failed by remember { mutableStateOf(false) }
+    var showHelp by remember { mutableStateOf(false) }
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
@@ -164,6 +165,9 @@ private fun AppScreen(
                             LlmContextStrip(headerLabel, state = headerState)
                         }
                         Spacer(modifier = Modifier.weight(1f))
+                        OutlinedButton(onClick = { showHelp = !showHelp }) {
+                            Text(if (showHelp) tr("Zurück", "Back") else tr("Hilfe", "Help"))
+                        }
                     }
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 }
@@ -178,6 +182,9 @@ private fun AppScreen(
                 .padding(horizontal = 12.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
+            if (showHelp) {
+                GuideScreen(::tr)
+            } else {
             LlmHairlineSurface(modifier = Modifier.fillMaxWidth()) {
                 Column(
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
@@ -345,6 +352,52 @@ private fun AppScreen(
                     )
                 }
             }
+            }
+        }
+    }
+}
+
+@Composable
+private fun GuideScreen(tr: (String, String) -> String) {
+    GuideSection(
+        tr("Erste Schritte", "Getting started"),
+        tr(
+            "1. Lade eine kompatible .litertlm-Modelldatei auf dein Smartphone.\n2. Tippe auf Modell auswählen und wähle die Datei. Der Service merkt sich den Dateizugriff und kopiert das Modell nicht.\n3. Prüfe bei Bedarf die Modelldatei.\n4. Gib im Prompt-Feld eine Frage ein und tippe auf Lokal ausführen.",
+            "1. Put a compatible .litertlm model file on your phone.\n2. Tap Select model and choose the file. The service remembers access to it without copying the model.\n3. Optionally check the model file.\n4. Enter a question in the Prompt field and tap Run locally.",
+        ),
+    )
+    GuideSection(
+        tr("Andere Apps verbinden", "Connect other apps"),
+        tr(
+            "Kompatible Apps können dieselbe lokale Modell-Laufzeit verwenden. Installiere den Android LLM Service, wähle hier ein Modell und verwende die Integration der jeweiligen Client-App. Die Client-App muss die Berechtigung de.fgna.androidllmservice.permission.BIND_LLM_SERVICE deklarieren. Es ist keine Freigabe pro App nötig.",
+            "Compatible apps can share this local model runtime. Install Android LLM Service, select a model here and use the integration in the client app. The client must declare the permission de.fgna.androidllmservice.permission.BIND_LLM_SERVICE. No per-app approval is required.",
+        ),
+    )
+    GuideSection(
+        tr("Bei Problemen", "Troubleshooting"),
+        tr(
+            "Kein Modell: Wähle zuerst eine .litertlm-Datei.\nDatei nicht lesbar: Tippe auf Modelldatei prüfen und wähle die Datei bei Bedarf erneut.\nGenerierung schlägt fehl: Prüfe, ob das Modell mit LiteRT-LM und deinem Gerät kompatibel ist und genügend Speicher verfügbar ist.\nClient findet den Service nicht: Prüfe Installation, Berechtigung und Modellstatus.",
+            "No model: Select a .litertlm file first.\nFile unreadable: Tap Check model file and reselect the file if needed.\nGeneration fails: Check LiteRT-LM and device compatibility and available memory.\nClient cannot find the service: Check installation, permission and model readiness.",
+        ),
+    )
+    GuideSection(
+        tr("Datenschutz", "Privacy"),
+        tr(
+            "Die aktuelle Version verarbeitet Prompts lokal auf dem Gerät. Sie sendet Anfragen nicht automatisch an einen Cloud-Anbieter.",
+            "The current version processes prompts locally on the device. It does not automatically send requests to a cloud provider.",
+        ),
+    )
+}
+
+@Composable
+private fun GuideSection(title: String, body: String) {
+    LlmHairlineSurface(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            LlmSectionLabel(title)
+            Text(body, style = MaterialTheme.typography.bodyMedium)
         }
     }
 }
