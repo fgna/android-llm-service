@@ -7,7 +7,7 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 android {
     namespace = "de.fgna.androidllmservice"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "de.fgna.androidllmservice"
